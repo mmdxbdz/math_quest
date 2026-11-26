@@ -2,6 +2,7 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../app_info.dart';
+import 'demo3d.dart';
 import '../models.dart';
 import '../store.dart';
 import '../content/curriculum.dart';
@@ -426,6 +427,14 @@ class _ParentScreenState extends State<ParentScreen> {
           ),
           icon: const Icon(Icons.privacy_tip_outlined),
           label: const Text('关于与隐私'),
+        ),
+        const SizedBox(height: 10),
+        OutlinedButton.icon(
+          onPressed: () => Navigator.of(context).push(
+            MaterialPageRoute(builder: (_) => const Demo3D()),
+          ),
+          icon: const Icon(Icons.view_in_ar_outlined),
+          label: const Text('3D 渲染验证场景'),
         ),
         const SizedBox(height: 30),
       ],
