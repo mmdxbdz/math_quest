@@ -1118,6 +1118,29 @@ class _WorldPainter extends CustomPainter {
       }
     }
 
+    // 岸边一块块礁石
+    for (var y = (cam / 78).floor() * 78.0 - 78;
+        y < cam + viewH + 156;
+        y += 78) {
+      final wob = sin(y * 0.0068) * 0.085 + cos(y * 0.0029) * 0.055;
+      final hw = w * 0.335 * (1 + wob);
+      final cen = cx + sin(y * 0.0042) * w * 0.335 * 0.10;
+      for (final side in const [-1.0, 1.0]) {
+        final rr = 8.0 + ((y.toInt() ~/ 78) % 3) * 3.5;
+        final rx = cen + side * hw * 0.98;
+        canvas.drawOval(
+          Rect.fromCenter(
+              center: Offset(rx, y + 6), width: rr * 2.3, height: rr * 1.4),
+          Paint()..color = const Color(0xFFAFBAC4),
+        );
+        canvas.drawOval(
+          Rect.fromCenter(
+              center: Offset(rx - 2, y - 2), width: rr * 1.5, height: rr * 0.95),
+          Paint()..color = const Color(0xFFD2DAE2),
+        );
+      }
+    }
+
     _paintTrail(canvas);
     _paintLighthouse(canvas, cx + w * 0.23, 128);
     _paintDecos(canvas);
@@ -1293,6 +1316,25 @@ class _WorldPainter extends CustomPainter {
         ..color = const Color(0xFFFFFBF0).withValues(alpha: 0.9),
     );
     canvas.restore();
+
+    // 一片片木栈道/石板的接缝
+    final seam = Paint()
+      ..color = const Color(0xFFBFB4A0).withValues(alpha: 0.5)
+      ..strokeWidth = 2.0
+      ..strokeCap = StrokeCap.round;
+    for (var i = 0; i < pts.length - 1; i++) {
+      final a = pts[i];
+      final b = pts[i + 1];
+      final seg = (b - a).distance;
+      if (seg < 1) continue;
+      final d = (b - a) / seg;
+      final nrm = Offset(-d.dy, d.dx);
+      final steps = (seg / 34).floor();
+      for (var k = 1; k < steps; k++) {
+        final p = Offset.lerp(a, b, k / steps)!;
+        canvas.drawLine(p - nrm * 15, p + nrm * 15, seam);
+      }
+    }
   }
 
   Path _smooth(List<Offset> pts) {
@@ -1619,6 +1661,40 @@ class _SeaPainter extends CustomPainter {
           colors: [Color(0xFF9CE8E4), Color(0xFF6FD3DA), Color(0xFF46B6C8)],
           stops: [0.0, 0.45, 1.0],
         ).createShader(seaRect),
+    );
+
+    // 地平线远处的小岛，让海面有远近层次
+    canvas.drawOval(
+      Rect.fromCenter(
+        center: Offset(w * 0.20, horizon + h * 0.045),
+        width: w * 0.30,
+        height: h * 0.030,
+      ),
+      Paint()..color = const Color(0xFF5FC7C6).withValues(alpha: 0.55),
+    );
+    canvas.drawOval(
+      Rect.fromCenter(
+        center: Offset(w * 0.18, horizon + h * 0.020),
+        width: w * 0.17,
+        height: h * 0.034,
+      ),
+      Paint()..color = const Color(0xFF7DD3A0).withValues(alpha: 0.85),
+    );
+    canvas.drawOval(
+      Rect.fromCenter(
+        center: Offset(w * 0.80, horizon + h * 0.030),
+        width: w * 0.22,
+        height: h * 0.024,
+      ),
+      Paint()..color = const Color(0xFF5FC7C6).withValues(alpha: 0.45),
+    );
+    canvas.drawOval(
+      Rect.fromCenter(
+        center: Offset(w * 0.79, horizon + h * 0.010),
+        width: w * 0.12,
+        height: h * 0.026,
+      ),
+      Paint()..color = const Color(0xFF86D8A4).withValues(alpha: 0.75),
     );
 
     // 地平线上的一道亮边

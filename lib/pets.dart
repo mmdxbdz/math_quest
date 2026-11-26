@@ -454,12 +454,15 @@ class PetAvatar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final st = stage.clamp(0, kPetStages - 1);
-    final r = size * (0.17 + st * 0.026);
+    final r = size * (0.172 + st * 0.012);
     final hat = (hatIndex >= 0 && hatIndex < kPetHats.length)
         ? kPetHats[hatIndex]
         : '';
     // 低头的时候帽子跟着脑袋一起下去
-    final dipY = dip * r * 0.75;
+    final dipY = dip * r * 1.15;
+    // 脑袋顶（和 _PetPainter 的几何保持一致），帽子扣在头顶上
+    final headTop = size * 0.93 - r * 3.75 + dipY;
+    final hatTop = headTop - r * 0.60;
     return SizedBox(
       width: size,
       height: size,
@@ -481,14 +484,14 @@ class PetAvatar extends StatelessWidget {
           ),
           if (hat.isNotEmpty)
             Positioned(
-              top: size * 0.60 - r * 1.95 + dipY,
+              top: hatTop,
               left: 0,
               right: 0,
               child: IgnorePointer(
                 child: Center(
                   child: Text(
                     hat,
-                    style: TextStyle(fontSize: r * 1.05),
+                    style: TextStyle(fontSize: r * 1.15),
                   ),
                 ),
               ),
@@ -528,17 +531,25 @@ class _PetPainter extends CustomPainter {
     final w = size.width;
     final h = size.height;
     final cx = w / 2;
-    final baseCy = h * 0.60; // 站着的中心
-    final r = w * (0.17 + stage * 0.026); // 半径随阶段变大
     final wf = 1.0 + stage * 0.055; // 越来越宽（胖）
-    // 低头：整个身子往下压
-    final cy = baseCy + dip * r * 0.75;
+    final r = w * (0.172 + stage * 0.012); // 脑袋半径（随阶段变大）
+    final feetY = h * 0.93; // 脚踩在哪
+
+    // 睡觉：整个身子压扁一点，看起来像趴在窝里
+    if (sleeping) {
+      canvas.save();
+      canvas.translate(cx, feetY);
+      canvas.scale(1.06, 0.92);
+      canvas.translate(-cx, -feetY);
+    }
+    // 低头吃饭：只有脑袋往下沉（身体不动）
+    final cy = feetY - r * 3.75 + dip * r * 1.15; // 脑袋中心
 
     // 地面影子（软一点，像黏土摆在桌上）
     final shadowRect = Rect.fromCenter(
-      center: Offset(cx, cy + r * 1.10),
-      width: r * 2.5 * wf,
-      height: r * 0.68,
+      center: Offset(cx, feetY + r * 0.10),
+      width: r * 3.4 * wf,
+      height: r * 0.62,
     );
     canvas.drawOval(
       shadowRect,
@@ -552,6 +563,9 @@ class _PetPainter extends CustomPainter {
           stops: const [0.0, 0.55, 1.0],
         ).createShader(shadowRect),
     );
+
+    // 身体（小身子 + 胳膊 + 脚 + 尾巴），脑袋随后盖在上面
+    _paintBody(canvas, cx, cy, feetY, r, wf);
 
     // 耳朵（画在身体后面）
     final earPaint = Paint()..color = species.ear;
@@ -643,9 +657,9 @@ class _PetPainter extends CustomPainter {
 
     // 肚皮（软软的一大块，边上晕开）
     final bellyRect = Rect.fromCenter(
-      center: Offset(cx, cy + r * 0.40),
-      width: r * 1.30 * wf,
-      height: r * 1.12,
+      center: Offset(cx, cy + r * 0.42),
+      width: r * 1.02 * wf,
+      height: r * 0.86,
     );
     canvas.drawOval(
       bellyRect,
@@ -660,6 +674,13 @@ class _PetPainter extends CustomPainter {
           stops: const [0.55, 1.0],
         ).createShader(bellyRect),
     );
+    canvas.drawOval(
+      bodyRect,
+      Paint()
+        ..color = Colors.black.withValues(alpha: 0.06)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = r * 0.05,
+    );
 
     // 嘴鼻那一块浅浅的白色（参考图里猫狗熊都有）
     final muzzleRect = Rect.fromCenter(
@@ -672,9 +693,6 @@ class _PetPainter extends CustomPainter {
       Paint()..color = Color.lerp(species.belly, Colors.white, 0.55)!
           .withValues(alpha: species.id == 'panda' ? 0.0 : 0.92),
     );
-
-    // 脖子上的小配饰
-    _paintAccessory(canvas, cx, cy, r, wf);
 
     // 熊猫黑眼圈
     if (species.id == 'panda') {
@@ -826,65 +844,154 @@ class _PetPainter extends CustomPainter {
       );
     }
 
-    // 四个小爪：走路时一前一后抬起来，肉垫是浅色的
-    final pawY = baseCy + r * 0.95; // 小爪始终踩在地上
-    for (var i = 0; i < 2; i++) {
-      final dir = i == 0 ? -1.0 : 1.0;
-      final lift = _paw(i) * r * 0.16;
-      final pawRect = Rect.fromCenter(
-        center: Offset(cx + dir * r * 0.62 * wf, pawY + lift),
-        width: r * 0.52,
-        height: r * 0.36,
-      );
-      canvas.drawOval(
-        pawRect,
-        Paint()
-          ..shader = RadialGradient(
-            center: const Alignment(-0.3, -0.4),
-            radius: 1.1,
-            colors: [
-              Color.lerp(species.ear, Colors.white, 0.35)!,
-              species.ear,
-            ],
-          ).createShader(pawRect),
-      );
-      // 肉垫：一大两小
-      final padColor = species.patch.withValues(alpha: 0.55);
-      canvas.drawOval(
-        Rect.fromCenter(
-          center: Offset(0, 1) + Offset(cx + dir * r * 0.62 * wf, pawY + lift),
-          width: r * 0.17,
-          height: r * 0.13,
-        ),
-        Paint()..color = padColor,
-      );
-      for (final ox in [-0.13, 0.0, 0.13]) {
-        canvas.drawCircle(
-          Offset(cx + dir * r * 0.62 * wf + r * ox, pawY + lift - r * 0.10),
-          r * 0.035,
-          Paint()..color = padColor,
+    // 脖子上的小配饰（围巾 / 蝴蝶结 / 胸背带）：围在脑袋和身子的交界处
+    _paintAccessory(canvas, cx, cy + r * 0.90, r, wf);
+
+    if (sleeping) canvas.restore();
+  }
+
+  /// 圆滚滚的身子 + 两条胳膊 + 两只脚 + 尾巴（画在脑袋后面）
+  void _paintBody(
+      Canvas canvas, double cx, double headCy, double feetY, double r, double wf) {
+    final neckY = headCy + r * 0.62;
+    final bodyH = (feetY - r * 0.30) - neckY;
+    final bodyCy = neckY + bodyH / 2;
+    final bodyW = r * 1.62 * wf;
+
+    // 尾巴（猫 / 狐狸 / 狗 / 猪 有小尾巴，画在身子后面）
+    if (species.id == 'cat' ||
+        species.id == 'fox' ||
+        species.id == 'dog' ||
+        species.id == 'pig') {
+      final wag = _paw(0) * 0.20;
+      final tail = Path()
+        ..moveTo(cx + bodyW * 0.34, bodyCy + bodyH * 0.18)
+        ..quadraticBezierTo(
+          cx + bodyW * 0.95,
+          bodyCy + bodyH * 0.05 + r * wag,
+          cx + bodyW * 0.86,
+          bodyCy - bodyH * 0.34 + r * wag,
         );
-      }
+      canvas.drawPath(
+        tail,
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = r * 0.22
+          ..strokeCap = StrokeCap.round
+          ..color = species.ear,
+      );
     }
 
-    // 边线让轮廓更清楚
+    // 脚（先画，被身子压住一点）
+    for (var i = 0; i < 2; i++) {
+      final dir = i == 0 ? -1.0 : 1.0;
+      final lift = _paw(i) * r * 0.18;
+      final footRect = Rect.fromCenter(
+        center: Offset(cx + dir * r * 0.42 * wf, feetY - r * 0.10 - lift),
+        width: r * 0.66,
+        height: r * 0.44,
+      );
+      canvas.drawOval(
+        footRect,
+        Paint()..shader = _sphereShade(species.ear, footRect),
+      );
+      _pads(canvas, footRect.center + Offset(0, r * 0.04), r * 0.34,
+          species.patch);
+    }
+
+    // 身子
+    final bodyRect = Rect.fromCenter(
+      center: Offset(cx, bodyCy),
+      width: bodyW,
+      height: bodyH,
+    );
+    canvas.drawOval(
+      bodyRect,
+      Paint()..shader = _sphereShade(species.body, bodyRect),
+    );
+    // 肚子
+    final bellyRect = Rect.fromCenter(
+      center: Offset(cx, bodyCy + bodyH * 0.10),
+      width: bodyW * 0.66,
+      height: bodyH * 0.72,
+    );
+    canvas.drawOval(
+      bellyRect,
+      Paint()
+        ..shader = RadialGradient(
+          colors: [
+            species.belly,
+            Color.lerp(species.belly, species.body, 0.45)!,
+          ],
+          stops: const [0.5, 1.0],
+        ).createShader(bellyRect),
+    );
     canvas.drawOval(
       bodyRect,
       Paint()
-        ..color = Colors.black.withValues(alpha: 0.08)
+        ..color = Colors.black.withValues(alpha: 0.06)
         ..style = PaintingStyle.stroke
-        ..strokeWidth = r * 0.06,
+        ..strokeWidth = r * 0.05,
     );
+
+    // 两条胳膊（走路时前后摆）
+    for (var i = 0; i < 2; i++) {
+      final dir = i == 0 ? -1.0 : 1.0;
+      final swing = _paw(i) * r * 0.13;
+      final armCenter = Offset(
+        cx + dir * bodyW * 0.45,
+        bodyCy - bodyH * 0.06 + swing,
+      );
+      final armRect = Rect.fromCenter(
+        center: armCenter,
+        width: r * 0.46,
+        height: r * 0.78,
+      );
+      canvas.save();
+      canvas.translate(armCenter.dx, armCenter.dy);
+      canvas.rotate(dir * 0.20);
+      canvas.translate(-armCenter.dx, -armCenter.dy);
+      canvas.drawOval(
+        armRect,
+        Paint()..shader = _sphereShade(species.ear, armRect),
+      );
+      _pads(canvas, armCenter + Offset(0, r * 0.16), r * 0.26, species.patch);
+      canvas.restore();
+    }
+  }
+
+  /// 黏土球体：左上亮、右下暗
+  Shader _sphereShade(Color base, Rect rect) => RadialGradient(
+        center: const Alignment(-0.40, -0.50),
+        radius: 1.05,
+        colors: [
+          Color.lerp(base, Colors.white, 0.48)!,
+          base,
+          Color.lerp(base, const Color(0xFF5B3B2A), 0.22)!,
+        ],
+        stops: const [0.0, 0.60, 1.0],
+      ).createShader(rect);
+
+  /// 肉垫：一大三小
+  void _pads(Canvas canvas, Offset c, double s, Color color) {
+    final pad = Paint()..color = color.withValues(alpha: 0.5);
+    canvas.drawOval(
+      Rect.fromCenter(center: c, width: s * 1.05, height: s * 0.72),
+      pad,
+    );
+    for (final ox in [-0.55, 0.0, 0.55]) {
+      canvas.drawCircle(c + Offset(s * ox, -s * 0.62), s * 0.19, pad);
+    }
   }
 
   /// 脖子上的小配饰（参考图里的围巾 / 蝴蝶结 / 胸背带）
-  void _paintAccessory(Canvas canvas, double cx, double cy, double r, double wf) {
+  void _paintAccessory(Canvas canvas, double cx, double neckY, double r, double wf) {
     final acc = species.accessory;
     if (acc == 'none') return;
     final base = species.accColor;
     final dark = Color.lerp(base, const Color(0xFF3A2C28), 0.28)!;
     final light = Color.lerp(base, Colors.white, 0.35)!;
-    final y = cy + r * 0.52;
+    final y = neckY;
 
     switch (acc) {
       case 'scarf':
@@ -958,20 +1065,20 @@ class _PetPainter extends CustomPainter {
         canvas.drawRRect(
           RRect.fromRectAndRadius(
             Rect.fromCenter(
-              center: Offset(cx, cy + r * 0.34),
-              width: r * 1.10 * wf,
-              height: r * 0.15,
+              center: Offset(cx, y + r * 0.34),
+              width: r * 1.05 * wf,
+              height: r * 0.14,
             ),
-            Radius.circular(r * 0.08),
+            Radius.circular(r * 0.07),
           ),
           strap,
         );
         canvas.drawRRect(
           RRect.fromRectAndRadius(
             Rect.fromCenter(
-              center: Offset(cx, cy + r * 0.80),
-              width: r * 0.94 * wf,
-              height: r * 0.14,
+              center: Offset(cx, y + r * 0.86),
+              width: r * 0.88 * wf,
+              height: r * 0.13,
             ),
             Radius.circular(r * 0.07),
           ),
@@ -979,13 +1086,13 @@ class _PetPainter extends CustomPainter {
         );
         // 中间的金属扣
         canvas.drawCircle(
-          Offset(cx, cy + r * 0.56),
-          r * 0.11,
+          Offset(cx, y + r * 0.60),
+          r * 0.10,
           Paint()..color = const Color(0xFFFFE7A8),
         );
         canvas.drawCircle(
-          Offset(cx, cy + r * 0.56),
-          r * 0.06,
+          Offset(cx, y + r * 0.60),
+          r * 0.055,
           Paint()..color = const Color(0xFFE6B75C),
         );
         break;

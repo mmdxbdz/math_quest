@@ -397,7 +397,7 @@ class _ParentScreenState extends State<ParentScreen> {
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('版本 ' + AppInfo.version,
+                  Text('版本 ' + AppInfo.versionLabel,
                       style: const TextStyle(
                           fontSize: 12, color: Colors.blueGrey)),
                   const SizedBox(height: 10),
