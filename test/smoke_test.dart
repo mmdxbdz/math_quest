@@ -17,8 +17,8 @@ void main() {
     expect(find.text('今日任务'), findsOneWidget);
     expect(find.text('数学闯关岛'), findsOneWidget);
 
-    // 每个单元一个岛上节点（自拟主题名）
-    expect(find.text('小小调查员'), findsOneWidget);
-    expect(find.text('平均分东西'), findsOneWidget);
+    // 首页一屏一座圆岛：标题条写着这是第几座岛、哪个主题
+    expect(find.textContaining('第 1/'), findsOneWidget);
+    expect(find.textContaining('小小调查员'), findsWidgets);
   });
 }

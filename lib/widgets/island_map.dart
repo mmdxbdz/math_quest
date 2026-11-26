@@ -120,9 +120,13 @@ class MapLayout {
   final List<MapSign> signs;
   final List<MapDeco> decos;
   final List<MapPetHouse> houses;
-  final List<Offset> trail; // 按世界 y 从小到大（= 从岛顶到岛底）
+  final List<Offset> trail; // 一条小路，按爬岛的先后顺序
   final int currentIndex;
   final double currentY;
+
+  /// 这是第几座岛（= 第几个主题单元），以及一共有几座岛
+  final int unitIndex;
+  final int unitCount;
 
   const MapLayout({
     required this.width,
@@ -134,6 +138,8 @@ class MapLayout {
     required this.trail,
     required this.currentIndex,
     required this.currentY,
+    this.unitIndex = 0,
+    this.unitCount = 1,
   });
 
   /// 小路上某个高度处的中线 x
@@ -157,191 +163,212 @@ class MapLayout {
     return a.dx + (b.dx - a.dx) * t;
   }
 
-  factory MapLayout.build(Size size, List<Unit> units, ProgressStore store) {
-    const nodeGap = 120.0; // 台阶间距
-    const signGap = 84.0; // 木牌与第一关的间距
-    const unitGap = 36.0; // 主题之间的留白
-    const houseGap = 132.0; // 宠物房占的那一段路
-    const topPad = 180.0;
+// 岛的椭圆范围（画图和布局共用同一套数字）
+  static const double islandCx = 0.5;
+  static const double islandCy = 0.545;
+  static const double islandRx = 0.455;
+  static const double islandRy = 0.325;
 
+  static Offset islandCenter(Size size) =>
+      Offset(size.width * islandCx, size.height * islandCy);
+  static double islandWidth(Size size) => size.width * islandRx * 2;
+  static double islandHeight(Size size) => size.height * islandRy * 2;
+
+  /// 一座岛 = 课程里的一个主题单元（2~4 课时，6~12 关），一屏就能看完整座岛。
+  /// 关卡从岛的最下面那一关开始，一圈圈盘上去，山顶是灯塔。
+  factory MapLayout.build(Size size, List<Unit> units, ProgressStore store,
+      {int? unitIndex}) {
     final w = size.width;
-    final cx = w / 2;
-    final amp = min(w * 0.115, 46.0);
+    final h = size.height;
+    final c = islandCenter(size);
+    final rx = size.width * islandRx;
+    final ry = size.height * islandRy;
 
-    // 整座岛上一共几间宠物房（开场送的那只不算）
-    var levelTotal = 0;
-    for (final u in units) {
-      levelTotal += u.lessons.length * 3;
+    // 每个单元几关、从第几关开始
+    final counts = [for (final u in units) u.lessons.length * 3];
+    final starts = <int>[];
+    var acc = 0;
+    for (final n in counts) {
+      starts.add(acc);
+      acc += n;
     }
-    final houseCount = min(
-      kPetSpecies.length - 1,
-      levelTotal ~/ kPetUnlockEveryLevels,
-    );
-    final ownedSpecies =
-        store.pets.map((p) => p.speciesId).toSet();
 
-    // 先把整座岛算多高：路线是从下往上爬的
-    var total = topPad;
-    total += houseCount * houseGap;
+    // 全岛链的关卡顺序（用来判断解锁和"现在在第几关"）
+    final keys = <String>[];
+    final starsOf = <int>[];
     for (final u in units) {
-      total += signGap + u.lessons.length * 3 * nodeGap + unitGap;
-    }
-    final height = total + 140;
-
-    /// 世界 y：越小 = 屏幕越靠上。
-    /// 第 1 关在岛的最下面（y 最大），越往后越往上爬（y 越小）。
-    double worldY(double dist) => height - dist;
-
-    var dist = topPad; // 从最下面的第 1 关往上量
-    var idx = 0;
-    var houseIdx = 0;
-    final levels = <MapLevel>[];
-    final signs = <MapSign>[];
-    final houses = <MapPetHouse>[];
-    final trailTopDown = <Offset>[];
-
-    for (final unit in units) {
-      final firstLevel = idx + 1;
-      final signDist = dist;
-      dist += signGap;
-
-      var unitDone = 0;
-      for (final lesson in unit.lessons) {
+      for (final lesson in u.lessons) {
         for (var stage = 0; stage < 3; stage++) {
-          final x = cx + amp * sin(idx * 0.42);
-          final y = worldY(dist);
-          final stars = store.stageStars(lesson.id, stage);
-          levels.add(MapLevel(
-            lesson: lesson,
-            stage: stage,
-            key: '${lesson.id}:s$stage',
-            index: idx,
-            x: x,
-            y: y,
-            stars: stars,
-            unlocked: store.levelUnlocked(orderedLevelKeys, idx),
-            current: false,
-          ));
-          trailTopDown.add(Offset(x, y));
-          if (stars > 0) unitDone++;
-          idx++;
-          dist += nodeGap;
-          // 每满 6 关：在刚过的这一关和下一关中间开一间宠物房
-          if (idx % kPetUnlockEveryLevels == 0 && houseIdx < houseCount) {
-            final sp = petSpeciesOf(kPetUnlockOrder[houseIdx + 1]);
-            final hx = cx + amp * sin((idx - 0.5) * 0.42);
-            final hy = worldY(dist + houseGap * 0.42);
-            houses.add(MapPetHouse(
-              speciesId: sp.id,
-              x: hx,
-              y: hy,
-              order: houseIdx + 1,
-              owned: ownedSpecies.contains(sp.id),
-            ));
-            trailTopDown.add(Offset(hx, hy));
-            dist += houseGap;
-            houseIdx++;
-          }
+          keys.add('${lesson.id}:s$stage');
+          starsOf.add(store.stageStars(lesson.id, stage));
         }
       }
+    }
 
-      final signX = cx + amp * sin((firstLevel - 1) * 0.42);
-      signs.add(MapSign(
-        unit: unit,
-        x: signX,
-        y: worldY(signDist),
-        done: unitDone,
-        total: unit.lessons.length * 3,
-        firstLevel: firstLevel,
-        lastLevel: idx,
+    var globalCur = -1;
+    for (var i = 0; i < keys.length; i++) {
+      if (store.levelUnlocked(keys, i) && starsOf[i] == 0) {
+        globalCur = i;
+        break;
+      }
+    }
+    if (globalCur < 0) {
+      for (var i = 0; i < keys.length; i++) {
+        if (store.levelUnlocked(keys, i)) globalCur = i;
+      }
+      if (globalCur < 0) globalCur = 0;
+    }
+
+    // 现在在哪座岛
+    var curUnit = 0;
+    for (var i = 0; i < counts.length; i++) {
+      if (globalCur >= starts[i] && globalCur < starts[i] + counts[i]) {
+        curUnit = i;
+        break;
+      }
+    }
+    final ui = (unitIndex ?? curUnit).clamp(0, units.length - 1);
+
+    final unit = units[ui];
+    final start = starts[ui];
+    final n = counts[ui];
+
+    // 关卡沿着圆岛盘旋而上：第 1 关在岛底，最后一关在山顶
+    final levels = <MapLevel>[];
+    final trail = <Offset>[];
+    for (var k = 0; k < n; k++) {
+      final g = start + k;
+      final u01 = n == 1 ? 0.0 : k / (n - 1);
+      final ang = (90 - 480 * u01) * pi / 180; // 从底下开始，转一圈零一点盘上去
+      final rad = 0.80 - 0.30 * u01; // 越往上越靠里
+      final x = c.dx + cos(ang) * rx * rad;
+      final y = c.dy + sin(ang) * ry * rad;
+      final lesson = unit.lessons[k ~/ 3];
+      final stage = k % 3;
+      levels.add(MapLevel(
+        lesson: lesson,
+        stage: stage,
+        key: keys[g],
+        index: g,
+        x: x,
+        y: y,
+        stars: starsOf[g],
+        unlocked: store.levelUnlocked(keys, g),
+        current: g == globalCur,
       ));
-      trailTopDown.add(Offset(signX, worldY(signDist)));
-      dist += unitGap;
+      trail.add(Offset(x, y));
     }
 
-    // 当前关：第一个已解锁但还没拿星的关；全通了就停在最后一关
-    var currentIdx = levels.indexWhere((l) => l.unlocked && l.stars == 0);
-    if (currentIdx < 0) {
-      currentIdx = levels.indexWhere((l) => l.unlocked);
-      if (currentIdx < 0) currentIdx = 0;
-    }
-    levels[currentIdx] = levels[currentIdx].asCurrent();
+    // 岛底一块木牌：这座岛的名字和进度
+    final signY = c.dy + ry * 1.16;
+    final done = levels.where((l) => l.stars > 0).length;
+    final signs = <MapSign>[
+      MapSign(
+        unit: unit,
+        x: c.dx,
+        y: signY,
+        done: done,
+        total: n,
+        firstLevel: start + 1,
+        lastLevel: start + n,
+      ),
+    ];
+    trail.insert(0, Offset(c.dx, signY - 14));
 
-    // 下一间宠物房：还没住人的第一间，门上挂金圈
-    final nextHouse =
-        houses.indexWhere((h) => !h.owned);
+    // 宠物房：每满 6 关一间，落在这座岛的关卡之间
+    final houses = <MapPetHouse>[];
+    final ownedSpecies = store.pets.map((p) => p.speciesId).toSet();
+    final houseCount = min(
+      kPetSpecies.length - 1,
+      keys.length ~/ kPetUnlockEveryLevels,
+    );
+    for (var k = 1; k <= houseCount; k++) {
+      final afterGlobal = kPetUnlockEveryLevels * k - 1;
+      final li = afterGlobal - start;
+      if (li < 0 || li >= n) continue;
+      final sp = petSpeciesOf(kPetUnlockOrder[k]);
+      final a = levels[li];
+      final b = li + 1 < n ? levels[li + 1] : null;
+      final hx = b == null ? a.x + 44 : (a.x + b.x) / 2;
+      final hy = b == null ? a.y - 42 : (a.y + b.y) / 2;
+      houses.add(MapPetHouse(
+        speciesId: sp.id,
+        x: hx,
+        y: hy,
+        order: k,
+        owned: ownedSpecies.contains(sp.id),
+      ));
+    }
+    final nextHouse = houses.indexWhere((hh) => !hh.owned);
     if (nextHouse >= 0) {
-      final h = houses[nextHouse];
+      final hh = houses[nextHouse];
       houses[nextHouse] = MapPetHouse(
-        speciesId: h.speciesId,
-        x: h.x,
-        y: h.y,
-        order: h.order,
-        owned: h.owned,
+        speciesId: hh.speciesId,
+        x: hh.x,
+        y: hh.y,
+        order: hh.order,
+        owned: hh.owned,
         next: true,
       );
     }
 
-    // 小路点按世界 y 递增排序（木牌是插在关卡之间的，一起排）
-    trailTopDown.sort((a, b) => a.dy.compareTo(b.dy));
-
-    // 装饰：沿小路两侧随机种
-    final rnd = Random(11);
+    // 装饰：岛上零星种点东西，别挡着路
+    final rnd = Random(23 + ui * 11);
     final decos = <MapDeco>[];
-    final signCount = signs.length;
-    for (var i = 0; i < 110; i++) {
-      final y = 90 + rnd.nextDouble() * (height - 180);
-      final tx = _trailAt(trailTopDown, w / 2, y);
-      final side = rnd.nextBool() ? 1 : -1;
-      final off = w * (0.16 + rnd.nextDouble() * 0.09);
+    for (var i = 0; i < 46; i++) {
+      final ang = rnd.nextDouble() * pi * 2;
+      final rad = 0.34 + rnd.nextDouble() * 0.60;
+      final x = c.dx + cos(ang) * rx * rad;
+      final y = c.dy + sin(ang) * ry * rad;
+      var tooClose = false;
+      for (final l in levels) {
+        if ((Offset(l.x, l.y) - Offset(x, y)).distance < 54) {
+          tooClose = true;
+          break;
+        }
+      }
+      if (tooClose) continue;
       decos.add(MapDeco(
         kind: rnd.nextInt(6),
-        x: tx + side * off,
+        x: x,
         y: y,
-        size: 21 + rnd.nextDouble() * 12,
+        size: 20 + rnd.nextDouble() * 12,
       ));
     }
-    // 岛底和岛顶各放几个大件，避免太空
-    if (signCount > 0) {
-      decos.add(MapDeco(kind: 1, x: cx - w * 0.2, y: height - 70, size: 30));
-      decos.add(MapDeco(kind: 0, x: cx + w * 0.2, y: height - 90, size: 30));
-      // 山顶（最后的关卡上方）
-      decos.add(MapDeco(kind: 1, x: cx - w * 0.18, y: 84, size: 28));
-      decos.add(MapDeco(kind: 2, x: cx + w * 0.26, y: 150, size: 26));
-    }
+    // 山顶和岛边固定几个大件
+    decos.add(MapDeco(kind: 0, x: c.dx - w * 0.22, y: c.dy - ry * 0.60, size: 30));
+    decos.add(MapDeco(kind: 0, x: c.dx + w * 0.20, y: c.dy - ry * 0.44, size: 28));
+    decos.add(MapDeco(kind: 1, x: c.dx + w * 0.10, y: c.dy + ry * 0.66, size: 28));
+    decos.add(MapDeco(kind: 4, x: c.dx - w * 0.30, y: c.dy + ry * 0.42, size: 24));
+    decos.add(MapDeco(kind: 5, x: c.dx + w * 0.30, y: c.dy - ry * 0.06, size: 22));
+
+    var curIdx = levels.indexWhere((l) => l.current);
+    if (curIdx < 0) curIdx = 0;
 
     return MapLayout(
       width: w,
-      height: height,
+      height: h,
       levels: levels,
       signs: signs,
       decos: decos,
       houses: houses,
-      trail: trailTopDown,
-      currentIndex: currentIdx,
-      currentY: levels[currentIdx].y,
+      trail: trail,
+      currentIndex: curIdx,
+      currentY: levels[curIdx].y,
+      unitIndex: ui,
+      unitCount: units.length,
     );
   }
 
-  static double _trailAt(List<Offset> trail, double fallback, double y) {
-    if (trail.isEmpty) return fallback;
-    if (y <= trail.first.dy) return trail.first.dx;
-    if (y >= trail.last.dy) return trail.last.dx;
-    var lo = 0;
-    var hi = trail.length - 1;
-    while (hi - lo > 1) {
-      final mid = (lo + hi) ~/ 2;
-      if (trail[mid].dy <= y) {
-        lo = mid;
-      } else {
-        hi = mid;
-      }
+  /// 整条岛链上一共有几关（给标题显示用）
+  static int totalLevels(List<Unit> units) {
+    var n = 0;
+    for (final u in units) {
+      n += u.lessons.length * 3;
     }
-    final a = trail[lo];
-    final b = trail[hi];
-    final t = (y - a.dy) / (b.dy - a.dy == 0 ? 1 : b.dy - a.dy);
-    return a.dx + (b.dx - a.dx) * t;
+    return n;
   }
+
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -366,170 +393,202 @@ class IslandMap extends StatefulWidget {
   State<IslandMap> createState() => _IslandMapState();
 }
 
-class _IslandMapState extends State<IslandMap>
-    with SingleTickerProviderStateMixin {
-  /// 相机：屏幕最上方对应的世界 y。世界 y 越小 = 越高的地方。
-  double _cam = 0;
-  double _maxCam = 0;
-  bool _inited = false;
-  late final AnimationController _fling =
-      AnimationController.unbounded(vsync: this);
+class _IslandMapState extends State<IslandMap> {
+  /// null = 跟着现在的进度走；点了左右箭头（或左右滑）就临时翻到别的岛
+  int? _browse;
 
-  @override
-  void initState() {
-    super.initState();
-    _fling.addListener(_onFlingTick);
-  }
-
-  void _onFlingTick() {
-    final v = _fling.value;
-    if (v < 0 || v > _maxCam) {
-      _fling.stop();
-      setState(() => _cam = v.clamp(0.0, _maxCam));
-      return;
-    }
-    setState(() => _cam = v);
-  }
-
-  @override
-  void dispose() {
-    _fling.dispose();
-    super.dispose();
-  }
-
-  /// 画面跟着手指走：手指往下滑，上面的下一关就跟着往下出来
-  void _onDragUpdate(DragUpdateDetails d) {
-    _fling.stop();
-    setState(() => _cam = (_cam - d.delta.dy).clamp(0.0, _maxCam));
-  }
-
-  void _onDragEnd(DragEndDetails d) {
-    final v = -d.velocity.pixelsPerSecond.dy;
-    if (v.abs() < 90) return;
-    _fling.value = _cam;
-    _fling.animateWith(ClampingScrollSimulation(
-      position: _cam,
-      velocity: v,
-      tolerance: const Tolerance(velocity: 6, distance: 1),
-    ));
-  }
-
-  void _focusCurrent(MapLayout layout, double viewH) {
-    final target = (layout.currentY - viewH * 0.32).clamp(0.0, _maxCam);
-    _fling.stop();
-    _fling.value = _cam;
-    _fling.animateTo(
-      target,
-      duration: const Duration(milliseconds: 480),
-      curve: Curves.easeOutCubic,
-    );
+  void _switchTo(int next, int unitCount) {
+    if (next < 0 || next >= unitCount) return;
+    setState(() => _browse = next);
   }
 
   @override
   Widget build(BuildContext context) {
     return LayoutBuilder(builder: (context, constraints) {
       final size = Size(constraints.maxWidth, constraints.maxHeight);
-      final layout = MapLayout.build(size, units, widget.store);
-      _maxCam = max(0.0, layout.height - size.height);
-      if (!_inited) {
-        _inited = true;
-        _cam = (layout.currentY - size.height * 0.32).clamp(0.0, _maxCam);
-      }
-      if (_cam > _maxCam) _cam = _maxCam;
-
-      // 倾斜之后内容顶部会缩进一块，多画一截补上，免得露出接缝
-      final extraTop = size.height * 0.55;
-      final boxH = size.height + extraTop;
-      final cam = _cam - extraTop;
+      final layout =
+          MapLayout.build(size, units, widget.store, unitIndex: _browse);
 
       final mapStack = Stack(
         clipBehavior: Clip.hardEdge,
         children: [
           Positioned.fill(
             child: RepaintBoundary(
-              child: CustomPaint(
-                painter: _WorldPainter(
-                  layout: layout,
-                  cam: cam,
-                  viewH: boxH,
-                ),
-              ),
+              child: CustomPaint(painter: _WorldPainter(layout: layout)),
             ),
           ),
-          // 木牌只有十来个，全部保留（滚出屏幕的部分会被裁掉）
-          for (final s in layout.signs) _signPost(s, cam),
-          // 宠物房：夹在两关中间，门框上挂着住在这里的宠物
-          for (final h in layout.houses)
-            if (h.y - cam > -240 && h.y - cam < boxH + 240) _petHouse(h, cam),
-          for (final l in layout.levels)
-            if (l.y - cam > -220 && l.y - cam < boxH + 220)
-              _levelNode(l, cam),
+          for (final s in layout.signs) _signPost(s),
+          for (final h in layout.houses) _petHouse(h),
+          for (final l in layout.levels) _levelNode(l),
         ],
       );
 
       return Stack(
         children: [
           const Positioned.fill(child: RepaintBoundary(child: _Backdrop())),
-          Positioned(
-            left: 0,
-            right: 0,
-            top: -extraTop,
-            bottom: 0,
+          Positioned.fill(
             child: GestureDetector(
               behavior: HitTestBehavior.opaque,
-              onVerticalDragStart: (_) => _fling.stop(),
-              onVerticalDragUpdate: _onDragUpdate,
-              onVerticalDragEnd: _onDragEnd,
-              // 整个画面做一点透视，越往上越远——立体感主要来自这里
+              onHorizontalDragEnd: (d) {
+                final v = d.primaryVelocity ?? 0;
+                if (v < -120) _switchTo(layout.unitIndex + 1, layout.unitCount);
+                if (v > 120) _switchTo(layout.unitIndex - 1, layout.unitCount);
+              },
+              onVerticalDragEnd: (d) {
+                final v = d.primaryVelocity ?? 0;
+                if (v < -120) _switchTo(layout.unitIndex + 1, layout.unitCount);
+                if (v > 120) _switchTo(layout.unitIndex - 1, layout.unitCount);
+              },
+              // 整座岛做一点透视：看起来是斜着从海面上鼓起来的
               child: Transform(
-                alignment: Alignment.bottomCenter,
+                alignment: Alignment.center,
                 transform: Matrix4.identity()
-                  ..setEntry(3, 2, 0.0011)
-                  ..rotateX(-0.26)
-                  ..scaleByDouble(1.18, 1.18, 1.18, 1),
+                  ..setEntry(3, 2, 0.0009)
+                  ..rotateX(-0.20)
+                  ..scaleByDouble(1.06, 1.06, 1.06, 1),
                 child: mapStack,
               ),
             ),
           ),
-          Positioned(
-            right: 14,
-            bottom: widget.bottomInset,
-            child: _locateButton(layout, size.height),
-          ),
+          Positioned(left: 0, right: 0, top: 0, child: _islandBar(layout)),
+          if (_browse != null)
+            Positioned(
+              right: 14,
+              bottom: widget.bottomInset,
+              child: GestureDetector(
+                onTap: () => setState(() => _browse = null),
+                child: Container(
+                  width: 46,
+                  height: 46,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: Colors.white.withValues(alpha: 0.92),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.18),
+                        blurRadius: 10,
+                        offset: const Offset(0, 4),
+                      ),
+                    ],
+                  ),
+                  child: const Center(
+                    child: Text('🎯', style: TextStyle(fontSize: 20)),
+                  ),
+                ),
+              ),
+            ),
         ],
       );
     });
   }
 
-  Widget _locateButton(MapLayout layout, double viewH) {
-    return GestureDetector(
-      onTap: () => _focusCurrent(layout, viewH),
-      child: Container(
-        width: 46,
-        height: 46,
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          color: Colors.white.withValues(alpha: 0.92),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.18),
-              blurRadius: 10,
-              offset: const Offset(0, 4),
+  /// 岛顶上的标题条：第几座岛 · 名字，两边可以翻岛
+  Widget _islandBar(MapLayout layout) {
+    final unit = units[layout.unitIndex];
+    return SafeArea(
+      bottom: false,
+      child: Padding(
+        padding: const EdgeInsets.only(top: 6, left: 10, right: 10),
+        child: Row(
+          children: [
+            _arrow(
+              '◀',
+              layout.unitIndex > 0,
+              () => _switchTo(layout.unitIndex - 1, layout.unitCount),
+            ),
+            Expanded(
+              child: Center(
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+                  decoration: BoxDecoration(
+                    gradient: const LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: [Color(0xFFC08A55), Color(0xFF9A6535)],
+                    ),
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: const Color(0xFF6F4520), width: 2),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.22),
+                        blurRadius: 8,
+                        offset: const Offset(0, 4),
+                      ),
+                    ],
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(unit.emoji, style: const TextStyle(fontSize: 16)),
+                      const SizedBox(width: 7),
+                      Flexible(
+                        child: Text(
+                          '第 ${layout.unitIndex + 1}/${layout.unitCount} 座岛 · '
+                          '${unit.title}',
+                          maxLines: 1,
+                          softWrap: false,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.white,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            _arrow(
+              '▶',
+              layout.unitIndex < layout.unitCount - 1,
+              () => _switchTo(layout.unitIndex + 1, layout.unitCount),
             ),
           ],
-        ),
-        child: const Center(
-          child: Text('🎯', style: TextStyle(fontSize: 20)),
         ),
       ),
     );
   }
 
-  Widget _signPost(MapSign s, double cam) {
-    final sy = s.y - cam;
+  Widget _arrow(String label, bool enabled, VoidCallback onTap) {
+    return GestureDetector(
+      onTap: enabled ? onTap : null,
+      child: Container(
+        width: 38,
+        height: 38,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: Colors.white.withValues(alpha: enabled ? 0.92 : 0.45),
+          boxShadow: enabled
+              ? [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.16),
+                    blurRadius: 8,
+                    offset: const Offset(0, 3),
+                  ),
+                ]
+              : null,
+        ),
+        child: Center(
+          child: Text(
+            label,
+            style: TextStyle(
+              fontSize: 15,
+              color: enabled ? const Color(0xFF6F4520) : const Color(0xFFB9B2A6),
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _signPost(MapSign s) {
     return Positioned(
       left: s.x - 120,
-      top: sy - 30,
+      top: s.y - 30,
       width: 240,
       height: 60,
       child: Center(
@@ -597,35 +656,37 @@ class _IslandMapState extends State<IslandMap>
     );
   }
 
-  Widget _petHouse(MapPetHouse h, double cam) {
-    final sy = h.y - cam;
+  Widget _petHouse(MapPetHouse h) {
     final sp = petSpeciesOf(h.speciesId);
     return Positioned(
       left: h.x - 60,
-      top: sy - 58,
+      top: h.y - 58,
       width: 120,
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
         onTap: widget.onPetHouseTap,
-        child: _PetHouseNode(species: sp, owned: h.owned, next: h.next),
+        child: Transform.scale(
+          scale: 0.84,
+          child: _PetHouseNode(species: sp, owned: h.owned, next: h.next),
+        ),
       ),
     );
   }
 
-  Widget _levelNode(MapLevel l, double cam) {
-    final sy = l.y - cam;
+  Widget _levelNode(MapLevel l) {
     Widget pedestal = _LevelPedestal(level: l);
     if (l.current) {
       pedestal = _Bob(child: pedestal);
     }
     return Positioned(
       left: l.x - 46,
-      top: sy - 32,
+      top: l.y - 32,
       width: 92,
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
         onTap: () => widget.onStartLevel(l),
-        child: pedestal,
+        // 一屏要摆下 6~12 关，台阶画小一点才不会挤在一起
+        child: Transform.scale(scale: 0.72, child: pedestal),
       ),
     );
   }
@@ -1003,149 +1064,151 @@ class _BobState extends State<_Bob> with SingleTickerProviderStateMixin {
 
 class _WorldPainter extends CustomPainter {
   final MapLayout layout;
-  final double cam;
-  final double viewH;
 
-  const _WorldPainter({
-    required this.layout,
-    required this.cam,
-    required this.viewH,
-  });
+  const _WorldPainter({required this.layout});
 
   @override
   void paint(Canvas canvas, Size size) {
-    canvas.save();
-    canvas.translate(0, -cam);
+    final c = MapLayout.islandCenter(size);
+    final rx = MapLayout.islandWidth(size) / 2;
+    final ry = MapLayout.islandHeight(size) / 2;
 
-    final w = size.width;
-    final top = cam - 260;
-    final bottom = cam + viewH + 260;
-    final cx = w / 2;
+    Rect ell(double s) =>
+        Rect.fromCenter(center: c, width: rx * 2 * s, height: ry * 2 * s);
 
     // 海水下的影子
     canvas.save();
-    canvas.translate(8, 30);
-    canvas.drawPath(
-      _ribbon(w, top, bottom, w * 0.345),
-      Paint()..color = const Color(0xFF2C7FAE).withValues(alpha: 0.16),
+    canvas.translate(10, 26);
+    canvas.drawOval(
+      ell(1.0),
+      Paint()..color = const Color(0xFF2C7FAE).withValues(alpha: 0.18),
     );
     canvas.restore();
 
-    // 沙滩外面的礁石带（参考图里岛边那些灰石头）
-    canvas.drawPath(
-      _ribbon(w, top, bottom, w * 0.372),
+    // 岛外面两圈白浪
+    for (var i = 1; i >= 0; i--) {
+      canvas.drawOval(
+        ell(1.06 + i * 0.05),
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 7
+          ..color = Colors.white.withValues(alpha: i == 0 ? 0.5 : 0.26),
+      );
+    }
+
+    // 礁石带
+    canvas.drawOval(
+      ell(1.0),
       Paint()
         ..shader = const LinearGradient(
           begin: Alignment.topCenter,
           end: Alignment.bottomCenter,
           colors: [Color(0xFFC4CFD8), Color(0xFF9DAAB7)],
-        ).createShader(Rect.fromLTWH(0, top, w, bottom - top)),
+        ).createShader(ell(1.0)),
     );
-    // 岛外面两圈白浪
-    for (var i = 0; i < 2; i++) {
-      canvas.drawPath(
-        _ribbon(w, top, bottom, w * (0.382 + i * 0.022)),
-        Paint()
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 8
-          ..color = Colors.white.withValues(alpha: i == 0 ? 0.6 : 0.3),
-      );
-    }
 
-    // 岛的厚度：把整块岛往左下挤出一点，形成侧壁
+    // 岛的厚度：往左下挤一点，像一块从海里长出来的岛
     canvas.save();
-    canvas.translate(-12, 18);
-    canvas.drawPath(
-      _ribbon(w, top, bottom, w * 0.335),
+    canvas.translate(-9, 15);
+    canvas.drawOval(
+      ell(0.945),
       Paint()
         ..shader = const LinearGradient(
           begin: Alignment.topCenter,
           end: Alignment.bottomCenter,
           colors: [Color(0xFFDDBB80), Color(0xFFB78C51)],
-        ).createShader(Rect.fromLTWH(0, top, w, bottom - top)),
+        ).createShader(ell(1.0)),
     );
     canvas.restore();
 
     // 沙滩
-    canvas.drawPath(
-      _ribbon(w, top, bottom, w * 0.335),
+    canvas.drawOval(
+      ell(0.945),
       Paint()
         ..shader = const LinearGradient(
           begin: Alignment.topCenter,
           end: Alignment.bottomCenter,
           colors: [Color(0xFFFFF4DA), Color(0xFFF3DEB1)],
-        ).createShader(Rect.fromLTWH(0, top, w, bottom - top)),
+        ).createShader(ell(1.0)),
     );
 
-    // 草地
-    final grass = _ribbon(w, top, bottom, w * 0.335 - 22);
-    canvas.drawPath(
+    // 草地（圆鼓鼓的一大块）
+    final grass = ell(0.85);
+    canvas.drawOval(
       grass,
       Paint()
-        ..shader = const LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
+        ..shader = const RadialGradient(
+          center: Alignment(-0.18, -0.28),
+          radius: 0.95,
           colors: [Color(0xFFCEF0A7), Color(0xFFA3DC80), Color(0xFF7EC565)],
-          stops: [0.0, 0.5, 1.0],
-        ).createShader(Rect.fromLTWH(0, top, w, bottom - top)),
+          stops: [0.0, 0.55, 1.0],
+        ).createShader(grass),
     );
-    canvas.drawPath(
+    canvas.drawOval(
       grass,
       Paint()
         ..style = PaintingStyle.stroke
         ..strokeWidth = 4
-        ..color = Color(0xFFE6F9CB).withValues(alpha: 0.8),
+        ..color = Color(0xFFE6F9CB).withValues(alpha: 0.85),
+    );
+
+    // 山体上的一道高光（让圆岛看起来是鼓起来的）
+    canvas.drawOval(
+      Rect.fromCenter(
+        center: Offset(c.dx - rx * 0.16, c.dy - ry * 0.30),
+        width: rx * 0.95,
+        height: ry * 0.72,
+      ),
+      Paint()
+        ..shader = RadialGradient(
+          colors: [
+            Colors.white.withValues(alpha: 0.30),
+            Colors.white.withValues(alpha: 0.0),
+          ],
+        ).createShader(Rect.fromCenter(
+          center: Offset(c.dx - rx * 0.16, c.dy - ry * 0.30),
+          width: rx * 0.95,
+          height: ry * 0.72,
+        )),
     );
 
     // 草地上的小草簇（固定随机，不闪烁）
-    final grassTop = cam - 40;
-    final grassBottom = cam + viewH + 40;
-    for (var y = (grassTop / 46).floor() * 46.0; y < grassBottom; y += 46) {
-      final wob = sin(y * 0.0068) * 0.085 + cos(y * 0.0029) * 0.055;
-      final hw = (w * 0.335 - 34) * (1 + wob);
-      final cen = cx + sin(y * 0.0042) * w * 0.335 * 0.10;
-      for (var i = 0; i < 3; i++) {
-        final side = i == 0 ? -1.0 : (i == 1 ? 1.0 : 0.0);
-        final gx = cen + side * hw * (0.55 + 0.16 * ((y ~/ 46) % 3));
-        canvas.drawOval(
-          Rect.fromCenter(
-            center: Offset(gx, y + ((y.toInt() + i * 7) % 11)),
-            width: 12,
-            height: 5,
-          ),
-          Paint()..color = const Color(0xFF95D378).withValues(alpha: 0.55),
-        );
-      }
+    final rnd = Random(layout.unitIndex * 97 + 5);
+    for (var i = 0; i < 96; i++) {
+      final ang = rnd.nextDouble() * pi * 2;
+      final rad = 0.16 + rnd.nextDouble() * 0.66;
+      final x = c.dx + cos(ang) * rx * 0.85 * rad;
+      final y = c.dy + sin(ang) * ry * 0.85 * rad;
+      canvas.drawOval(
+        Rect.fromCenter(center: Offset(x, y), width: 12, height: 5),
+        Paint()..color = const Color(0xFF95D378).withValues(alpha: 0.5),
+      );
     }
 
     // 岸边一块块礁石
-    for (var y = (cam / 78).floor() * 78.0 - 78;
-        y < cam + viewH + 156;
-        y += 78) {
-      final wob = sin(y * 0.0068) * 0.085 + cos(y * 0.0029) * 0.055;
-      final hw = w * 0.335 * (1 + wob);
-      final cen = cx + sin(y * 0.0042) * w * 0.335 * 0.10;
-      for (final side in const [-1.0, 1.0]) {
-        final rr = 8.0 + ((y.toInt() ~/ 78) % 3) * 3.5;
-        final rx = cen + side * hw * 0.98;
-        canvas.drawOval(
-          Rect.fromCenter(
-              center: Offset(rx, y + 6), width: rr * 2.3, height: rr * 1.4),
-          Paint()..color = const Color(0xFFAFBAC4),
-        );
-        canvas.drawOval(
-          Rect.fromCenter(
-              center: Offset(rx - 2, y - 2), width: rr * 1.5, height: rr * 0.95),
-          Paint()..color = const Color(0xFFD2DAE2),
-        );
-      }
+    final rnd2 = Random(layout.unitIndex * 31 + 9);
+    for (var i = 0; i < 26; i++) {
+      final ang = rnd2.nextDouble() * pi * 2;
+      final rad = 0.965 + rnd2.nextDouble() * 0.03;
+      final x = c.dx + cos(ang) * rx * rad;
+      final y = c.dy + sin(ang) * ry * rad;
+      final rr = 7.0 + rnd2.nextDouble() * 5;
+      canvas.drawOval(
+        Rect.fromCenter(
+            center: Offset(x, y + 4), width: rr * 2.3, height: rr * 1.4),
+        Paint()..color = const Color(0xFFAFBAC4),
+      );
+      canvas.drawOval(
+        Rect.fromCenter(
+            center: Offset(x - 2, y - 2), width: rr * 1.5, height: rr * 0.95),
+        Paint()..color = const Color(0xFFD2DAE2),
+      );
     }
 
     _paintTrail(canvas);
-    _paintLighthouse(canvas, cx + w * 0.23, 128);
+    // 山顶的灯塔（在最后一关上方，岛的最高处）
+    _paintLighthouse(canvas, c.dx, c.dy - ry * 0.88);
     _paintDecos(canvas);
-
-    canvas.restore();
   }
 
   /// 山顶的灯塔（白塔身 + 橘色圆顶 + 暖黄灯光）
@@ -1247,28 +1310,6 @@ class _WorldPainter extends CustomPainter {
     canvas.restore();
   }
 
-  Path _ribbon(double w, double top, double bottom, double halfW) {
-    const step = 26.0;
-    final left = <Offset>[];
-    final right = <Offset>[];
-    for (var y = top; y <= bottom + step; y += step) {
-      final wob = sin(y * 0.0068) * 0.085 + cos(y * 0.0029) * 0.055;
-      final hw = halfW * (1 + wob);
-      final cen = w / 2 + sin(y * 0.0042) * halfW * 0.10;
-      left.add(Offset(cen - hw, y));
-      right.add(Offset(cen + hw, y));
-    }
-    final p = Path()..moveTo(left.first.dx, left.first.dy);
-    for (final o in left.skip(1)) {
-      p.lineTo(o.dx, o.dy);
-    }
-    for (final o in right.reversed) {
-      p.lineTo(o.dx, o.dy);
-    }
-    p.close();
-    return p;
-  }
-
   void _paintTrail(Canvas canvas) {
     final pts = layout.trail;
     if (pts.length < 2) return;
@@ -1293,7 +1334,7 @@ class _WorldPainter extends CustomPainter {
       path,
       Paint()
         ..style = PaintingStyle.stroke
-        ..strokeWidth = 34
+        ..strokeWidth = 22
         ..strokeCap = StrokeCap.round
         ..strokeJoin = StrokeJoin.round
         ..shader = const LinearGradient(
@@ -1332,7 +1373,7 @@ class _WorldPainter extends CustomPainter {
       final steps = (seg / 34).floor();
       for (var k = 1; k < steps; k++) {
         final p = Offset.lerp(a, b, k / steps)!;
-        canvas.drawLine(p - nrm * 15, p + nrm * 15, seam);
+        canvas.drawLine(p - nrm * 10, p + nrm * 10, seam);
       }
     }
   }
@@ -1352,11 +1393,8 @@ class _WorldPainter extends CustomPainter {
   }
 
   void _paintDecos(Canvas canvas) {
-    final top = cam - 120;
-    final bottom = cam + viewH + 120;
-    final visible = layout.decos
-        .where((d) => d.y > top && d.y < bottom)
-        .toList()
+    // 一屏装得下一整座岛，所以装饰全画（数量本来就不多）
+    final visible = layout.decos.toList()
       ..sort((a, b) => a.y.compareTo(b.y));
 
     for (final d in visible) {
@@ -1565,7 +1603,9 @@ class _WorldPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(_WorldPainter old) =>
-      old.cam != cam || old.layout.height != layout.height;
+      old.layout.unitIndex != layout.unitIndex ||
+      old.layout.levels.length != layout.levels.length ||
+      old.layout.height != layout.height;
 }
 
 // ─────────────────────────────────────────────────────────────

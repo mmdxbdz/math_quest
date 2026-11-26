@@ -6,114 +6,114 @@ import 'package:math_quest/store.dart';
 import 'package:math_quest/widgets/island_map.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+Future<ProgressStore> freshStore() async {
+  SharedPreferences.setMockInitialValues({});
+  final store = ProgressStore();
+  await store.load();
+  store.resetAll();
+  return store;
+}
+
 void main() {
-  test('路线往上走：第 1 关在最下面，越往后越往上', () async {
-    SharedPreferences.setMockInitialValues({});
-    final store = ProgressStore();
-    await store.load();
-    store.resetAll();
+  test('一座岛 = 一个主题单元，一屏装得下；所有岛的关卡加起来是全部关卡', () async {
+    final store = await freshStore();
+    const size = Size(390, 844);
 
-    final layout = MapLayout.build(const Size(390, 844), units, store);
-    expect(layout.levels.length, orderedLevelKeys.length);
+    var total = 0;
+    for (var i = 0; i < units.length; i++) {
+      final layout = MapLayout.build(size, units, store, unitIndex: i);
+      expect(layout.unitIndex, i);
+      expect(layout.unitCount, units.length);
+      // 这座岛只放这个单元的关卡
+      expect(layout.levels.length, units[i].lessons.length * 3);
+      for (final l in layout.levels) {
+        expect(units[i].lessons.contains(l.lesson), isTrue);
+      }
+      total += layout.levels.length;
 
-    // 屏幕 y 越小 = 越靠上
-    for (var i = 1; i < layout.levels.length; i++) {
-      expect(layout.levels[i].y, lessThan(layout.levels[i - 1].y),
-          reason: '第 ${i + 1} 关应该在上一关上面');
+      // 关卡都在岛的椭圆范围内（一屏之内）
+      final c = MapLayout.islandCenter(size);
+      final rx = MapLayout.islandWidth(size) / 2;
+      final ry = MapLayout.islandHeight(size) / 2;
+      for (final l in layout.levels) {
+        final dx = (l.x - c.dx) / rx;
+        final dy = (l.y - c.dy) / ry;
+        expect(dx * dx + dy * dy, lessThanOrEqualTo(1.0),
+            reason: '第 ${l.index + 1} 关跑到海里去了');
+        expect(l.y, inInclusiveRange(0, size.height));
+      }
     }
-    // 第 1 关贴近岛的最下方
-    expect(layout.levels.first.y, greaterThan(layout.height * 0.85));
-    // 标题木牌在它那一段关卡的下方（从下往上爬的时候先看到木牌）
-    final sign = layout.signs.first;
-    expect(sign.y, greaterThan(layout.levels.first.y));
-    // 小路也是按 y 从小到大排好的
-    for (var i = 1; i < layout.trail.length; i++) {
-      expect(layout.trail[i].dy, greaterThanOrEqualTo(layout.trail[i - 1].dy));
-    }
+    expect(total, orderedLevelKeys.length);
   });
 
-  testWidgets('手指往下划，地图跟着往下走，上面的关卡就露出来', (tester) async {
-    SharedPreferences.setMockInitialValues({});
-    final store = ProgressStore();
-    await store.load();
-    store.resetAll();
+  test('岛底是第 1 关，越往后越往上盘，山顶是最后一关', () async {
+    final store = await freshStore();
+    const size = Size(390, 844);
+    final layout = MapLayout.build(size, units, store);
 
-    tester.view.physicalSize = const Size(390, 844);
-    tester.view.devicePixelRatio = 1.0;
-    addTearDown(() {
-      tester.view.resetPhysicalSize();
-      tester.view.resetDevicePixelRatio();
-    });
-
-    await tester.pumpWidget(MaterialApp(
-      home: Scaffold(
-        body: IslandMap(store: store, onStartLevel: (_) {}),
-      ),
-    ));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 200));
-
-    // 第 2 关在第 1 关上面
-    final l1 = tester.getCenter(find.text('1'));
-    final l2 = tester.getCenter(find.text('2'));
-    expect(l2.dy, lessThan(l1.dy));
-
-    // 手指往下扒拉 → 地图跟着往下走
-    await tester.drag(find.byType(IslandMap), const Offset(0, 170));
-    await tester.pump();
-
-    final l2after = tester.getCenter(find.text('2'));
-    expect(l2after.dy, greaterThan(l2.dy + 60),
-        reason: '手指往下滑，上面的第 2 关应该跟着往下走近镜头');
-
-    // 往反方向推回去，地图也往回走（不会反着跳）
-    await tester.drag(find.byType(IslandMap), const Offset(0, -170));
-    await tester.pump();
-    final l2back = tester.getCenter(find.text('2'));
-    expect(l2back.dy, lessThan(l2after.dy - 40));
+    // 第一关在岛的最下面
+    expect(layout.levels.first.y, greaterThan(layout.levels.last.y));
+    expect(layout.levels.first.y, greaterThan(size.height * 0.7));
+    // 木牌在整座关卡的下方
+    expect(layout.signs.first.y, greaterThan(layout.levels.first.y));
+    // 小路从木牌出发、第一站就是第 1 关
+    expect(layout.trail.length, greaterThanOrEqualTo(layout.levels.length));
+    expect(layout.trail.first.dy, greaterThan(layout.trail[1].dy));
   });
 
-  test('宠物房开在"满了 6 关"的那一关和下一关中间，门框上是具体宠物', () async {
-    SharedPreferences.setMockInitialValues({});
-    final store = ProgressStore();
-    await store.load();
-    store.resetAll();
+  test('当前进度自动落在对应的那座岛上', () async {
+    final store = await freshStore();
+    const size = Size(390, 844);
+
+    // 前 6 个单元的关卡全部通关
+    var n = 0;
+    for (var u = 0; u < 6; u++) {
+      for (final lesson in units[u].lessons) {
+        for (var stage = 0; stage < 3; stage++) {
+          store.finishLevel('${lesson.id}:s$stage', 3);
+          n++;
+        }
+      }
+    }
+    expect(n, greaterThan(6));
+    final layout = MapLayout.build(size, units, store);
+    expect(layout.unitIndex, 6);
+    // 岛上有一关是"现在这一关"
+    expect(layout.levels.where((l) => l.current).length, 1);
+  });
+
+  test('宠物房开在"满了 6 关"的那一关后面，门框上是具体宠物', () async {
+    final store = await freshStore();
     store.adoptStarterPet();
+    const size = Size(390, 844);
 
-    final layout = MapLayout.build(const Size(390, 844), units, store);
-    // 9 种宠物：开场送北极熊，后面 8 只需要闯出来，所以岛上 8 间房
-    expect(layout.houses.length, kPetSpecies.length - 1);
-    // 顺序固定：小猫 → 小兔 → 小狗 …
-    expect(layout.houses.map((h) => h.speciesId).toList(),
-        kPetUnlockOrder.skip(1).toList());
-    for (var k = 0; k < layout.houses.length; k++) {
-      final h = layout.houses[k];
+    // 8 间房分散在不同的岛上
+    final all = <MapPetHouse>[];
+    for (var i = 0; i < units.length; i++) {
+      all.addAll(MapLayout.build(size, units, store, unitIndex: i).houses);
+    }
+    expect(all.length, kPetSpecies.length - 1);
+    expect(all.map((h) => h.speciesId).toList(), kPetUnlockOrder.skip(1).toList());
+    for (final h in all) {
       expect(h.owned, isFalse, reason: '还没通到就不该显示已领');
-      // 位置：在"第 6(k+1) 关"上面、"第 6(k+1)+1 关"下面（y 越小越靠上）
-      final after = layout.levels[kPetUnlockEveryLevels * (k + 1) - 1];
-      final before = layout.levels[kPetUnlockEveryLevels * (k + 1)];
-      expect(h.y, lessThan(after.y), reason: '宠物房应该在它前面那一关的上面');
-      expect(h.y, greaterThan(before.y), reason: '宠物房应该在它后面那一关的下面');
     }
 
-    // 通了 6 关：第一间房就"有人住了"，第二间还没
+    // 通了 6 关：第一间房就"有人住了"，第二间还没、挂金圈
     for (var i = 0; i < kPetUnlockEveryLevels; i++) {
       store.finishLevel(orderedLevelKeys[i], 3);
     }
-    final layout2 = MapLayout.build(const Size(390, 844), units, store);
-    expect(layout2.houses.first.owned, isTrue);
-    expect(layout2.houses[1].owned, isFalse);
-    // 下一间（第二间，小兔）挂金圈
-    expect(layout2.houses[1].next, isTrue);
-    expect(layout2.houses.first.next, isFalse);
+    final after = <MapPetHouse>[];
+    for (var i = 0; i < units.length; i++) {
+      after.addAll(MapLayout.build(size, units, store, unitIndex: i).houses);
+    }
+    expect(after.first.owned, isTrue);
+    expect(after.first.next, isFalse);
+    expect(after[1].owned, isFalse);
+    expect(after[1].next, isTrue);
   });
 
-  testWidgets('把地图往上翻，能看到挂着宠物头像的宠物房', (tester) async {
-    SharedPreferences.setMockInitialValues({});
-    final store = ProgressStore();
-    await store.load();
-    store.resetAll();
-    store.adoptStarterPet();
+  testWidgets('首页是圆岛：能点到关卡，也能翻到别的岛', (tester) async {
+    final store = await freshStore();
 
     tester.view.physicalSize = const Size(390, 844);
     tester.view.devicePixelRatio = 1.0;
@@ -122,23 +122,29 @@ void main() {
       tester.view.resetDevicePixelRatio();
     });
 
+    MapLevel? tapped;
     await tester.pumpWidget(MaterialApp(
       home: Scaffold(
-        body: IslandMap(store: store, onStartLevel: (_) {}),
+        body: IslandMap(store: store, onStartLevel: (l) => tapped = l),
       ),
     ));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 200));
 
-    // 宠物房在岛上（门框上挂着具体宠物的头像）
-    final before = tester.widgetList(find.byType(PetAvatar)).length;
+    // 标题条显示第 1 座岛
+    expect(find.textContaining('第 1/${units.length} 座岛'), findsOneWidget);
 
-    // 往下扒拉一大段，把第 6 关后面那间房翻进视野
-    for (var i = 0; i < 3; i++) {
-      await tester.drag(find.byType(IslandMap), const Offset(0, 400));
-      await tester.pump();
-    }
-    expect(tester.widgetList(find.byType(PetAvatar)).length, greaterThan(0));
-    expect(before, lessThanOrEqualTo(tester.widgetList(find.byType(PetAvatar)).length));
+    // 点第 1 关 → 进入
+    await tester.tap(find.text('1').first, warnIfMissed: false);
+    await tester.pump();
+    expect(tapped, isNotNull);
+
+    // 点右箭头 → 翻到下一座岛
+    await tester.tap(find.text('▶'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 200));
+    expect(find.textContaining('第 2/${units.length} 座岛'), findsOneWidget);
+    // 翻走了以后出现"回到现在这座岛"的按钮
+    expect(find.text('🎯'), findsOneWidget);
   });
 }
