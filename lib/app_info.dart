@@ -4,7 +4,7 @@ class AppInfo {
   static const String version = '1.0.0';
   /// 安装包序号（和 pubspec.yaml 版本号 + 后面那个数字一致），
   /// 家长面板会显示，用来确认手机上装的是不是最新那版
-  static const String build = '5';
+  static const String build = '6';
   static const String versionLabel = '$version ($build)';
 
   /// 隐私与关于说明（家长面板展示，上架/审核用）

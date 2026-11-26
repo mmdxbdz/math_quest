@@ -17,8 +17,8 @@ void main() {
     expect(find.text('今日任务'), findsOneWidget);
     expect(find.text('数学闯关岛'), findsOneWidget);
 
-    // 首页一屏一座圆岛：标题条写着这是第几座岛、哪个主题
-    expect(find.textContaining('第 1/'), findsOneWidget);
+    // 首页是往上走的岛路：脚下就是第 1 关和它的主题木牌
     expect(find.textContaining('小小调查员'), findsWidgets);
+    expect(find.text('1'), findsWidgets);
   });
 }
