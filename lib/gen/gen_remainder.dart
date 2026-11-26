@@ -2,10 +2,12 @@ import 'dart:math';
 import '../models.dart';
 import 'util.dart';
 
+String _pickOne(List<String> list, Random r) => list[ri(r, 0, list.length - 1)];
+
 /// u6l1 有余数除法的认识
 List<Question> genRemBasic(Random r, int stage) {
   final qs = <Question>[];
-  for (var t = 0; t < 4; t++) {
+  for (var t = 0; t < 24; t++) {
     final d = ri(r, 3, 9);
     final q0 = ri(r, 2, 9);
     final rem = ri(r, 1, d - 1);
@@ -13,23 +15,88 @@ List<Question> genRemBasic(Random r, int stage) {
     if (stage == 0) {
       qs.add(doubleQ(p.toString() + '÷' + d.toString() + '＝（　）……（　）', q0, rem,
           p.toString() + '＝' + d.toString() + '×' + q0.toString() + '＋' + rem.toString() + '，商 ' + q0.toString() + ' 余 ' + rem.toString() + '。', 'u6l1',
-          labels: ['商', '余数']));
+          labels: ['商', '余数'], skill: 'u6l1:compute'));
       qs.add(choiceQ('在有余数的除法里，余数一定要比除数（　）', '小', ['大', '相等'],
-          '余数如果等于或超过除数，说明还能再分一次。', 'u6l1', r: r));
+          '余数如果等于或超过除数，说明还能再分一次。', 'u6l1', r: r, skill: 'u6l1:rule'));
+      if (t % 3 == 0) {
+        // 让"余数比除数小"这个知识点也有多种问法
+        qs.add(numChoice('一个数除以 $d，余数最大是几？', d - 1, r,
+            '余数一定要比除数小，最大是 $d－1＝${d - 1}。', 'u6l1',
+            min: 1, max: d + 2, skill: 'u6l1:rule'));
+      } else if (t % 3 == 1) {
+        qs.add(choiceQ('$p÷$d 的余数是 $rem，下面哪个数也可能是除以 $d 的余数？',
+            '${d - 1}', ['$d', '${d + 1}'],
+            '余数必须比除数 $d 小，所以只有 ${d - 1} 可能。', 'u6l1',
+            r: r, skill: 'u6l1:rule'));
+      }
     } else if (stage == 1) {
       qs.add(inputQ(p.toString() + '÷' + d.toString() + '＝' + q0.toString() + '……（　）', rem,
-          p.toString() + '－' + (d * q0).toString() + '＝' + rem.toString() + '，余数是 ' + rem.toString() + '。', 'u6l1'));
+          p.toString() + '－' + (d * q0).toString() + '＝' + rem.toString() + '，余数是 ' + rem.toString() + '。', 'u6l1',
+          skill: 'u6l1:compute'));
       qs.add(inputQ('（　）÷' + d.toString() + '＝' + q0.toString() + '……' + rem.toString() + '，被除数是几？', p,
-          '被除数＝除数×商＋余数：' + d.toString() + '×' + q0.toString() + '＋' + rem.toString() + '＝' + p.toString() + '。', 'u6l1'));
+          '被除数＝除数×商＋余数：' + d.toString() + '×' + q0.toString() + '＋' + rem.toString() + '＝' + p.toString() + '。', 'u6l1',
+          skill: 'u6l1:compute'));
     } else {
-      qs.add(inputQ('14 个★，每 4 个分一组，可以分几组？', 3,
-          '14÷4＝3（组）……2（个），商是 3 组。', 'u6l1'));
-      final d3 = ri(r, 4, 9);
-      final q3 = ri(r, 2, 9);
-      final p3 = d3 * q3 + 3;
-      qs.add(choiceQ('下面哪道算式的余数是 3？', p3.toString() + '÷' + d3.toString(),
-          [(p3 - 1).toString() + '÷' + d3.toString(), (p3 - 2).toString() + '÷' + d3.toString()],
-          p3.toString() + '÷' + d3.toString() + '＝' + q3.toString() + '……3，其余算式的余数不是 3。', 'u6l1', r: r));
+      // 挑战：同一批数字换不同问法，保证每关都有新题
+      final d = ri(r, 4, 9);
+      final q0 = ri(r, 2, 9);
+      final rem = ri(r, 1, d - 1);
+      final p = d * q0 + rem;
+      final box = _pickOne(['个盒子', '个盘子', '个袋子', '个篮子'], r);
+      final thing = _pickOne(['鸡蛋', '饼干', '糖', '苹果', '贴纸', '小球'], r);
+      switch (t % 5) {
+        case 0:
+          qs.add(inputQ(
+              '$p 个$thing，每个$box装 $d 个，能装满几$box？',
+              q0,
+              '$p÷$d＝$q0……$rem，能装满 $q0$box，还剩 $rem 个。',
+              'u6l1',
+              skill: 'u6l1:compute'));
+        case 1:
+          qs.add(doubleQ(
+              '$p 个$thing，每$box装 $d 个，能装满几$box，还剩几个？',
+              q0,
+              rem,
+              '$p÷$d＝$q0……$rem。',
+              'u6l1',
+              labels: ['几$box', '还剩几个'],
+              skill: 'u6l1:compute'));
+        case 2:
+          qs.add(numChoice(
+              '□÷$d＝$q0，余数最大是几？',
+              d - 1,
+              r,
+              '余数一定要比除数小，最大是 $d－1＝${d - 1}。',
+              'u6l1',
+              min: 1,
+              max: d + 2,
+              skill: 'u6l1:rule'));
+        case 3:
+          {
+            final bad = d + ri(r, 0, 3);
+            qs.add(choiceQ(
+                '$p÷$d＝$q0……$bad，这个结果对不对？',
+                '不对，余数比除数大',
+                ['对', '不对，商太小'],
+                '余数 $bad 不小于除数 $d，说明还能再分。正确结果是 $q0……$rem。',
+                'u6l1',
+                r: r,
+                skill: 'u6l1:rule'));
+          }
+        default:
+          {
+            final target = ri(r, 1, d - 1);
+            final p2 = d * q0 + target;
+            qs.add(choiceQ(
+                '下面哪道算式的余数是 $target？',
+                '$p2÷$d',
+                ['${p2 + 1}÷$d', '${p2 - target}÷$d'],
+                '$p2÷$d＝$q0……$target，另一道的余数不是 $target。',
+                'u6l1',
+                r: r,
+                skill: 'u6l1:rule'));
+          }
+      }
     }
   }
   return dedupe(qs, 12);
@@ -38,7 +105,7 @@ List<Question> genRemBasic(Random r, int stage) {
 /// u6l2 竖式与试商
 List<Question> genRemTry(Random r, int stage) {
   final qs = <Question>[];
-  for (var t = 0; t < 4; t++) {
+  for (var t = 0; t < 24; t++) {
     if (stage == 0) {
       qs.add(inputQ('□÷6＝8……□，余数最大是几？', 5, '余数要比除数小，最大是 6－1＝5。', 'u6l2'));
       final d4 = ri(r, 4, 9);
@@ -72,7 +139,7 @@ List<Question> genRemTry(Random r, int stage) {
 /// u6l3 解决问题（进一法 / 去尾法）
 List<Question> genRemStory(Random r, int stage) {
   final qs = <Question>[];
-  for (var t = 0; t < 3; t++) {
+  for (var t = 0; t < 24; t++) {
     final d = ri(r, 4, 8);
     final q0 = ri(r, 3, 8);
     final rem = ri(r, 1, d - 1);
@@ -96,7 +163,7 @@ List<Question> genRemStory(Random r, int stage) {
           p.toString() + '÷' + d.toString() + '＝' + q0.toString() + '（串）……' + rem.toString() + '（个）', 'u6l3'));
     }
   }
-  return dedupe(qs, 9);
+  return dedupe(qs, 12);
 }
 
 /// u6l4 找规律（周期问题）
@@ -104,7 +171,7 @@ List<Question> genRemCycle(Random r, int stage) {
   final qs = <Question>[];
   const shapes = ['□', '△', '○', '☆'];
   const colors = ['红', '黄', '蓝', '绿'];
-  for (var t = 0; t < 4; t++) {
+  for (var t = 0; t < 24; t++) {
     final len = stage == 0 ? 3 : ri(r, 3, 4);
     final cyc = <String>[];
     final useColor = r.nextBool();
@@ -118,7 +185,7 @@ List<Question> genRemCycle(Random r, int stage) {
     if (stage == 0) {
       qs.add(choiceQ('按"' + pattern + pattern + '……"的顺序排列，第 ' + pos.toString() + ' 个是（　）', correct,
           [cyc[(idx + 1) % len], cyc[(idx + 2) % len]],
-          '每 ' + len.toString() + ' 个一循环：' + pos.toString() + '÷' + len.toString() + '＝' + (pos ~/ len).toString() + '……' + ((pos - 1) % len + 1 - 1).toString() + '，余几就是循环里的第几个。', 'u9l4', r: r));
+          '每 ' + len.toString() + ' 个一循环：' + pos.toString() + '÷' + len.toString() + '＝' + (pos ~/ len).toString() + '……' + ((pos - 1) % len + 1 - 1).toString() + '，余几就是循环里的第几个。', 'u6l4', r: r));
     } else if (stage == 1) {
       qs.add(choiceQ('彩灯按"' + pattern + '"的顺序重复亮起，第 ' + pos.toString() + ' 盏是什么颜色？', correct,
           cyc.where((c) => c != correct).toList(),

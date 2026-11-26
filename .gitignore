@@ -46,3 +46,9 @@ app.*.map.json
 
 # Widget Preview related
 .widget_preview/
+
+# 本机工具状态（每台机器不一样，不进仓库）
+.flutter_tool_state
+
+# DSH 脚手架工具包，跟这个小游戏无关
+/dsh-laptop-kit/

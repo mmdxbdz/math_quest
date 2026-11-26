@@ -10,13 +10,15 @@ void main() {
     await store.load();
 
     await tester.pumpWidget(const MathQuestApp());
-    await tester.pumpAndSettle();
+    // 首页有海岛动画在循环播放，不能用 pumpAndSettle
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
 
     expect(find.text('今日任务'), findsOneWidget);
-    expect(find.text('数学闯关 · 二下'), findsOneWidget);
+    expect(find.text('数学闯关岛'), findsOneWidget);
 
-    // 单元卡片存在
-    expect(find.text('数据收集整理'), findsOneWidget);
-    expect(find.text('表内除法（一）'), findsOneWidget);
+    // 每个单元一个岛上节点（自拟主题名）
+    expect(find.text('小小调查员'), findsOneWidget);
+    expect(find.text('平均分东西'), findsOneWidget);
   });
 }

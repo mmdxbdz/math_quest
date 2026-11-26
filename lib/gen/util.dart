@@ -34,7 +34,7 @@ List<int> nearNums(Random r, int correct, int count, {int min = 0, int max = 999
 
 Question choiceQ(String stem, String correct, List<String> distractors,
     String explain, String lessonId,
-    {Random? r}) {
+    {Random? r, String? skill}) {
   final opts = [correct, ...distractors];
   if (r != null) swapShuffle(opts, r);
   return Question(
@@ -43,38 +43,42 @@ Question choiceQ(String stem, String correct, List<String> distractors,
       options: opts,
       answer: correct,
       explain: explain,
-      lessonId: lessonId);
+      lessonId: lessonId,
+      skill: skill);
 }
 
 Question numChoice(String stem, int correct, Random r, String explain,
     String lessonId,
-    {int n = 3, int min = 0, int max = 999}) {
+    {int n = 3, int min = 0, int max = 999, String? skill}) {
   final ds = nearNums(r, correct, n - 1, min: min, max: max).map((e) => '$e').toList();
-  return choiceQ(stem, '$correct', ds, explain, lessonId, r: r);
+  return choiceQ(stem, '$correct', ds, explain, lessonId, r: r, skill: skill);
 }
 
 Question inputQ(String stem, int answer, String explain, String lessonId,
-    {String unit = ''}) {
+    {String unit = '', String? skill}) {
   return Question(
       kind: AnswerKind.input,
       stem: stem,
       answer: '$answer',
       explain: explain,
-      lessonId: lessonId);
+      lessonId: lessonId,
+      skill: skill);
 }
 
 Question compareQ(String left, String right, String cmp, String explain,
-    String lessonId) {
+    String lessonId,
+    {String? skill}) {
   return Question(
       kind: AnswerKind.compare,
       stem: '$left  ○  $right',
       answer: cmp,
       explain: explain,
-      lessonId: lessonId);
+      lessonId: lessonId,
+      skill: skill);
 }
 
 Question doubleQ(String stem, int a1, int a2, String explain, String lessonId,
-    {List<String> labels = const ['第一个空', '第二个空']}) {
+    {List<String> labels = const ['第一个空', '第二个空'], String? skill}) {
   return Question(
       kind: AnswerKind.double,
       stem: stem,
@@ -82,22 +86,18 @@ Question doubleQ(String stem, int a1, int a2, String explain, String lessonId,
       answer2: '$a2',
       explain: explain,
       lessonId: lessonId,
-      slotLabels: labels);
+      slotLabels: labels,
+      skill: skill);
 }
 
-/// 保留恰好 count 道题干互不重复的题
+/// 保留题干互不重复的题，最多 [count] 道。
+/// 候选不够就少出几道，**绝不重复补位**（重复的题会让娃觉得"怎么老一套"）。
 List<Question> dedupe(List<Question> qs, int count) {
   final seen = <String>{};
   final out = <Question>[];
   for (final q in qs) {
     if (seen.add(q.stem)) out.add(q);
     if (out.length >= count) break;
-  }
-  // 候选不足时才允许重复补位（正常生成器候选足够，不会走到这里）
-  var i = 0;
-  while (out.length < count && qs.isNotEmpty) {
-    out.add(qs[i % qs.length]);
-    i++;
   }
   return out;
 }

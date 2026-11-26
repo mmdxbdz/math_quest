@@ -1,4 +1,4 @@
-import 'dart:math';
+﻿import 'dart:math';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:math_quest/content/curriculum.dart';
@@ -6,6 +6,33 @@ import 'package:math_quest/gen/gen_remainder.dart';
 import 'package:math_quest/models.dart';
 
 void main() {
+  test('每道题都有知识点 skill，且归属本课时（总复习除外）', () {
+    final r = Random(3);
+    for (final lesson in allLessons) {
+      if (lesson.id == 'u10l1') continue; // 总复习跨课时抽题
+      for (var stage = 0; stage < 3; stage++) {
+        for (final q in lesson.gen(r, stage)) {
+          expect(q.skill, isNotEmpty, reason: 'skill 为空: ' + q.stem);
+          expect(q.skill == lesson.id || q.skill.startsWith(lesson.id + ':'),
+              isTrue, reason: 'skill 不属于本课时: ' + q.stem + ' -> ' + q.skill);
+        }
+      }
+    }
+  });
+
+  test('有余数除法课时含细分知识点，且能按细分出题', () {
+    final r = Random(11);
+    final qs = genRemBasic(r, 0);
+    expect(qs.any((q) => q.skill == 'u6l1:compute'), isTrue,
+        reason: 'skills=' + qs.map((q) => q.skill).join(','));
+    expect(qs.any((q) => q.skill == 'u6l1:rule'), isTrue,
+        reason: 'skills=' + qs.map((q) => q.skill).join(','));
+    final rr = Random(22);
+    final only = genForSkill('u6l1:rule', rr, 2);
+    expect(only.length, greaterThanOrEqualTo(2));
+    expect(only.every((q) => q.skill == 'u6l1:rule'), isTrue);
+  });
+
   test('每个课时每个阶段都能生成足够的题目', () {
     final r = Random(42);
     for (final lesson in allLessons) {

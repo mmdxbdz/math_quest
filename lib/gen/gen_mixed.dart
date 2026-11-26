@@ -1,11 +1,11 @@
-import 'dart:math';
+﻿import 'dart:math';
 import '../models.dart';
 import 'util.dart';
 
 /// u5l1 同级运算（从左往右）
 List<Question> genMixedSame(Random r, int stage) {
   final qs = <Question>[];
-  for (var t = 0; t < 4; t++) {
+  for (var t = 0; t < 24; t++) {
     if (stage == 0) {
       final a = ri(r, 10, 40);
       final b = ri(r, 2, 20);
@@ -24,9 +24,9 @@ List<Question> genMixedSame(Random r, int stage) {
       final c = ri(r, 2, 6);
       qs.add(inputQ((a * b).toString() + '÷' + a.toString() + '×' + c.toString() + '＝？', b * c,
           '从左往右：' + (a * b).toString() + '÷' + a.toString() + '=' + b.toString() + '，再乘 ' + c.toString() + '。', 'u5l1'));
-      final x = ri(r, 20, 60);
       final y = ri(r, 5, 15);
       final z = ri(r, 5, 15);
+      final x = y + z + ri(r, 5, 25); // 保证不会减成负数
       qs.add(inputQ(x.toString() + '－' + y.toString() + '－' + z.toString() + '＝？', x - y - z,
           '从左往右：先减 ' + y.toString() + ' 再减 ' + z.toString() + '。', 'u5l1'));
     } else {
@@ -50,12 +50,12 @@ List<Question> genMixedSame(Random r, int stage) {
 /// u5l2 含两级运算（先乘除后加减）
 List<Question> genMixedTwoLevel(Random r, int stage) {
   final qs = <Question>[];
-  for (var t = 0; t < 4; t++) {
+  for (var t = 0; t < 24; t++) {
     final a = ri(r, 2, 9);
     final b = ri(r, 2, 9);
     final p = a * b;
     if (stage == 0) {
-      final c = ri(r, 1, 20);
+      final c = ri(r, 1, max(1, p - 1));
       if (r.nextBool()) {
         qs.add(inputQ(c.toString() + '＋' + a.toString() + '×' + b.toString() + '＝？', c + p,
             '先算乘法：' + a.toString() + '×' + b.toString() + '=' + p.toString() + '，再算加法。', 'u5l2'));
@@ -94,7 +94,7 @@ String cmpOf(int l, int r2) => l < r2 ? '＜' : (l > r2 ? '＞' : '=');
 /// u5l3 含小括号的运算
 List<Question> genMixedParen(Random r, int stage) {
   final qs = <Question>[];
-  for (var t = 0; t < 3; t++) {
+  for (var t = 0; t < 24; t++) {
     final a = ri(r, 2, 9);
     final b = ri(r, 2, 9);
     final c = ri(r, 2, 9);
@@ -106,8 +106,8 @@ List<Question> genMixedParen(Random r, int stage) {
       qs.add(inputQ(p.toString() + '÷（' + a.toString() + '＋' + b.toString() + '）＝？', c,
           '先算括号里的 ' + s.toString() + '，再算除法。', 'u5l3'));
     } else if (stage == 1) {
-      qs.add(choiceQ('算式 ' + (a + b * c).toString() + '　的题：20－3×5 要先算（　）', '3×5',
-          ['20－3', '从左往右都行'], '有乘有加，先算乘法。', 'u5l3', r: r));
+      qs.add(choiceQ('算式 20－3×5 中，要先算（　）', '3×5',
+          ['20－3', '从左往右都行'], '有乘有减，先算乘法。', 'u5l3', r: r));
       final e = ri(r, 2, 6);
       final f = ri(r, 4, 8);
       final k = ri(r, 1, 2);
@@ -122,13 +122,13 @@ List<Question> genMixedParen(Random r, int stage) {
           '先算 ' + ((g + target) * 3).toString() + '÷3=' + (g + target).toString() + '，再减 ' + g.toString() + '。', 'u5l3'));
     }
   }
-  return dedupe(qs, 9);
+  return dedupe(qs, 12);
 }
 
 /// u5l4 解决问题（两步计算）
 List<Question> genMixedStory(Random r, int stage) {
   final qs = <Question>[];
-  for (var t = 0; t < 3; t++) {
+  for (var t = 0; t < 24; t++) {
     if (stage == 0) {
       final price = ri(r, 3, 6);
       final cnt = ri(r, 4, 7);
@@ -152,5 +152,5 @@ List<Question> genMixedStory(Random r, int stage) {
           box * boxes - sold, '先算一共：' + box.toString() + '×' + boxes.toString() + '=' + (box * boxes).toString() + '，再减卖出的。', 'u5l4'));
     }
   }
-  return dedupe(qs, 9);
+  return dedupe(qs, 12);
 }

@@ -1,11 +1,13 @@
-import 'dart:math';
+﻿import 'dart:math';
 import '../models.dart';
 import 'util.dart';
+
+int _pickNum(List<int> l, Random r) => l[ri(r, 0, l.length - 1)];
 
 /// u7l1 1000 以内数的认识
 List<Question> genNum1000(Random r, int stage) {
   final qs = <Question>[];
-  for (var t = 0; t < 4; t++) {
+  for (var t = 0; t < 24; t++) {
     final h = ri(r, 2, 9);
     final te = ri(r, 0, 9);
     final on = ri(r, 0, 9);
@@ -75,7 +77,7 @@ String _readNum(int h, int te, int on) {
 /// u7l2 10000 以内数的认识
 List<Question> genNum10000(Random r, int stage) {
   final qs = <Question>[];
-  for (var t = 0; t < 3; t++) {
+  for (var t = 0; t < 24; t++) {
     final th = ri(r, 1, 9);
     final h = ri(r, 0, 9);
     final te = ri(r, 0, 9);
@@ -92,18 +94,51 @@ List<Question> genNum10000(Random r, int stage) {
       qs.add(inputQ('一个四位数，千位是 ' + th.toString() + '，其余各位都是 0，这个数是几？', th * 1000,
           '其他位用 0 占位。', 'u7l2'));
     } else {
-      qs.add(inputQ('最大的四位数是多少？', 9999, '四个数位都是 9。', 'u7l2'));
-      qs.add(inputQ('比 ' + (th * 1000).toString() + ' 大 1000 的数是多少？', th * 1000 + 1000,
-          '大 1000 就是千位加 1。', 'u7l2'));
+      switch (t % 3) {
+        case 0:
+          {
+            final big = _pickNum([9999, 1000, 999, 10000], r);
+            qs.add(inputQ(
+                big == 9999
+                    ? '最大的四位数是多少？'
+                    : (big == 1000 ? '最小的四位数是多少？' : '万以内最大的三位数是多少？'),
+                big,
+                big == 9999
+                    ? '四个数位都是 9，就是 9999。'
+                    : (big == 1000 ? '一千位最小的非零数 1，后面全是 0，是 1000。' : '三个数位都是 9。'),
+                'u7l2'));
+          }
+        case 1:
+          {
+            final base = th * 1000 + h * 100;
+            final add = _pickNum([1000, 1000, 100], r);
+            qs.add(inputQ('比 $base ${add == 1000 ? '大 1000' : '大 100'} 的数是多少？',
+                base + add, '把${add == 1000 ? '千' : '百'}位加 1 就是 ${base + add}。',
+                'u7l2'));
+          }
+        default:
+          {
+            final n = th * 1000 + te * 10;
+            qs.add(inputQ('$n 里面有几个千？', th,
+                '$n 的千位是 $th，所以有 $th 个千。', 'u7l2'));
+            final near = num + _pickNum([1, 10, 100], r);
+            qs.add(inputQ('比 $num 大 1 的数是多少？', num + 1,
+                '$num 后面接着数一个就是 ${num + 1}。', 'u7l2'));
+            if (near > num + 1) {
+              qs.add(inputQ('比 $num 大 ${near - num} 的数是多少？', near,
+                  '把对应的数位加上 ${near - num}。', 'u7l2'));
+            }
+          }
+      }
     }
   }
-  return dedupe(qs, 9);
+  return dedupe(qs, 12);
 }
 
 /// u7l3 整百、整十数加减法
 List<Question> genRoundAdd(Random r, int stage) {
   final qs = <Question>[];
-  for (var t = 0; t < 4; t++) {
+  for (var t = 0; t < 24; t++) {
     if (stage == 0) {
       final a = ri(r, 2, 8) * 100;
       final b = ri(r, 2, 9) * 100;
@@ -135,7 +170,7 @@ List<Question> genRoundAdd(Random r, int stage) {
 /// u7l4 数的大小比较与近似数
 List<Question> genNumCompare(Random r, int stage) {
   final qs = <Question>[];
-  for (var t = 0; t < 3; t++) {
+  for (var t = 0; t < 24; t++) {
     if (stage == 0) {
       final a = ri(r, 100, 999);
       var b = ri(r, 100, 999);
@@ -164,5 +199,5 @@ List<Question> genNumCompare(Random r, int stage) {
           '近似数', ['准确数', '总数'], '用"大约"描述的数是近似数。', 'u7l4', r: r));
     }
   }
-  return dedupe(qs, 9);
+  return dedupe(qs, 12);
 }

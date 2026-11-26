@@ -1,12 +1,14 @@
-import 'dart:math';
+﻿import 'dart:math';
 import '../models.dart';
 import 'util.dart';
+
+String _pickOne(List<String> l, Random r) => l[ri(r, 0, l.length - 1)];
 
 /// u9l1 简单推理
 List<Question> genReasonSimple(Random r, int stage) {
   final qs = <Question>[];
   const pool = ['小红', '小明', '小刚', '小丽', '小强'];
-  for (var t = 0; t < 3; t++) {
+  for (var t = 0; t < 24; t++) {
     final p3 = [...pool];
     swapShuffle(p3, r);
     final a = p3[0], b = p3[1], c = p3[2];
@@ -18,15 +20,41 @@ List<Question> genReasonSimple(Random r, int stage) {
     } else if (stage == 1) {
       const books = ['语文书', '数学书', '英语书'];
       final held = books[ri(r, 0, 2)];
-      final others = books.where((s) => s != held).toList();
-      qs.add(choiceQ('三个小朋友分别拿着语文书、数学书、英语书各一本。小明拿的不是' + others[0] + '，也不是' + others[1] + '，小明拿的是（　）',
-          held, [others[0], others[1]], '用排除法：不是这两本，剩下的那本就是。', 'u9l1', r: r));
-      final s1 = ri(r, 2, 9);
-      final s2 = ri(r, 2, 9);
-      final more = s2 > s1 ? '小丽' : '小红';
-      final less = more == '小丽' ? '小红' : '小丽';
-      qs.add(choiceQ('小红和小丽跳绳，小红跳的下数比 ' + (s2 * 10).toString() + ' 下少，比 ' + ((s2 - 1) * 10).toString() + ' 下多。谁跳得多？',
-          more, [less, '一样多'], '小红在下 ' + ((s2 - 1) * 10).toString() + ' 到 ' + (s2 * 10).toString() + ' 之间，比小丽的 ' + (s2 * 10).toString() + ' 少。', 'u9l1', r: r));
+      final others = books.where((s) => s != held).toList()..shuffle(r);
+      qs.add(choiceQ(
+          '三个小朋友分别拿着语文书、数学书、英语书各一本。小明拿的不是${others[0]}，也不是${others[1]}，小明拿的是（　）',
+          held,
+          others,
+          '用排除法：不是这两本，剩下的那本就是。',
+          'u9l1',
+          r: r));
+      // 比多少：小红跳的比 lo 多、比 hi 少，小丽跳了 hi 下
+      final lo = ri(r, 2, 7) * 10;
+      final hi = lo + 10;
+      qs.add(choiceQ(
+          '小红跳的下数比 $lo 下多，比 $hi 下少；小丽跳了 $hi 下。（　）跳得多',
+          '小丽',
+          ['小红', '一样多'],
+          '小红不到 $hi 下，小丽正好 $hi 下，所以小丽跳得多。',
+          'u9l1',
+          r: r));
+      {
+        final fruit = _pickOne(['苹果', '香蕉', '橘子'], r);
+        final ds = ['苹果', '香蕉', '橘子'].where((e) => e != fruit).toList()
+          ..shuffle(r);
+        qs.add(choiceQ(
+            '妈妈买了苹果、香蕉、橘子。小明拿的是${ds[0]}，姐姐拿的不是${ds[0]}也不是${ds[1]}，姐姐拿的是（　）',
+            fruit,
+            [ds[1], ds[0]],
+            '小明拿了${ds[0]}，姐姐既不是${ds[0]}也不是${ds[1]}，只能是$fruit。',
+            'u9l1',
+            r: r));
+      }
+      {
+        final s = ri(r, 3, 9);
+        qs.add(numChoice('小红有 $s 颗糖，小丽比小红多 2 颗，小丽有几颗？', s + 2, r,
+            '$s＋2＝${s + 2}（颗）。', 'u9l1', min: 1, max: 20));
+      }
     } else {
       qs.add(choiceQ('甲、乙、丙三人，甲不是最高的，但比丙高。最高的是（　）', '乙', ['甲', '丙'],
           '甲比丙高又不是最高，所以从高到矮是：乙、甲、丙。', 'u9l1', r: r));
@@ -36,13 +64,13 @@ List<Question> genReasonSimple(Random r, int stage) {
           '先算出 ○＝' + c1.toString() + '，再算 △＝' + (c1 + d1).toString() + '－' + c1.toString() + '＝' + (d1 - c1).toString() + '。', 'u9l1'));
     }
   }
-  return dedupe(qs, 9);
+  return dedupe(qs, 12);
 }
 
 /// u9l2 数与符号推理
 List<Question> genReasonGrid(Random r, int stage) {
   final qs = <Question>[];
-  for (var t = 0; t < 3; t++) {
+  for (var t = 0; t < 24; t++) {
     if (stage == 0) {
       final s = ri(r, 2, 5);
       final o = s + ri(r, 1, 5);
@@ -79,5 +107,5 @@ List<Question> genReasonGrid(Random r, int stage) {
       }
     }
   }
-  return dedupe(qs, 9);
+  return dedupe(qs, 12);
 }

@@ -1,7 +1,7 @@
 name: math_quest
-description: 二年级下册数学闯关练习（人教版）
+description: 数学闯关岛 — 二年级数学闯关练习（纯离线，原创题库）
 publish_to: 'none'
-version: 1.0.0+1
+version: 1.0.0+2
 
 environment:
   sdk: '>=3.4.0 <4.0.0'
@@ -11,6 +11,8 @@ dependencies:
     sdk: flutter
   shared_preferences: ^2.2.3
   cupertino_icons: ^1.0.8
+  flutter_tts: ^4.0.2
+  audioplayers: ^6.1.0
 
 dev_dependencies:
   flutter_test:

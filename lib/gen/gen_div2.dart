@@ -1,11 +1,12 @@
-import 'dart:math';
+﻿import 'dart:math';
 import '../models.dart';
 import 'util.dart';
 
 /// u4l1 用 7、8、9 的乘法口诀求商
 List<Question> genDivFacts789(Random r, int stage) {
   final qs = <Question>[];
-  for (var t = 0; t < 4; t++) {
+  const cn = ['零', '一', '二', '三', '四', '五', '六', '七', '八', '九'];
+  for (var t = 0; t < 24; t++) {
     final a = ri(r, 4, 9);
     final b = ri(r, 4, 9);
     final p = a * b;
@@ -15,19 +16,60 @@ List<Question> genDivFacts789(Random r, int stage) {
       qs.add(inputQ(p.toString() + '÷' + b.toString() + '＝？', a,
           '想口诀"' + kouJue(a, b) + '"，所以 ' + p.toString() + '÷' + b.toString() + '=' + a.toString() + '。', 'u4l1'));
     } else if (stage == 1) {
-      final q = ri(r, 5, 9);
-      final good = q * q;
-      final side = (q - 1) * (q + 1);
-      qs.add(choiceQ('商是 ' + q.toString() + ' 的算式是（　）', good.toString() + '÷' + q.toString(),
-          [side.toString() + '÷' + (q - 1).toString(), side.toString() + '÷' + (q + 1).toString()],
-          good.toString() + '÷' + q.toString() + '=' + q.toString() + '，口诀"' + kouJue(q, q) + '"。', 'u4l1', r: r));
-      qs.add(inputQ('把口诀补充完整：八（　）七十二', 9, '八九七十二。', 'u4l1'));
+      switch (t % 4) {
+        case 0:
+          qs.add(inputQ('（　）×$a＝$p，括号里填几？', b,
+              '想口诀"${kouJue(a, b)}"，$a×$b＝$p。', 'u4l1'));
+        case 1:
+          {
+            // 口诀里两个因数都在 6~9，空出的那一位才好选
+            final aa = ri(r, 6, 9);
+            final bb = ri(r, 6, 9);
+            final k = kouJue(aa, bb);
+            final right = cn[bb];
+            final ds = ['六', '七', '八', '九'].where((e) => e != right).toList();
+            ds.shuffle(r);
+            qs.add(choiceQ('把口诀补充完整：${k[0]}（　）${k.substring(2)}',
+                right, ds.take(2).toList(),
+                '$aa×$bb＝${aa * bb}，口诀是"$k"。', 'u4l1', r: r));
+          }
+        case 2:
+          {
+            final q = ri(r, 6, 9);
+            final good = q * q;
+            final side = (q - 1) * (q + 1);
+            qs.add(choiceQ('商是 $q 的算式是（　）', '$good÷$q',
+                ['$side÷${q - 1}', '$side÷${q + 1}'],
+                '$good÷$q＝$q，口诀"${kouJue(q, q)}"。', 'u4l1', r: r));
+          }
+        default:
+          qs.add(inputQ('一个数除以 $a 得 $b，这个数是几？', p,
+              '$a×$b＝$p，所以这个数是 $p。', 'u4l1'));
+      }
     } else {
-      qs.add(inputQ('72 除以 8，商是几？', 9, '八九七十二，72÷8=9。', 'u4l1'));
-      final a2 = ri(r, 6, 9);
-      final b2 = ri(r, 6, 9);
-      qs.add(inputQ('两个数相乘的积是 ' + (a2 * b2).toString() + '，其中一个因数是 ' + a2.toString() + '，另一个是几？', b2,
-          (a2 * b2).toString() + '÷' + a2.toString() + '=' + b2.toString() + '，想口诀"' + kouJue(a2, b2) + '"。', 'u4l1'));
+      switch (t % 4) {
+        case 0:
+          qs.add(inputQ('$p 除以 $a，商是几？', b,
+              '想口诀"${kouJue(a, b)}"，$p÷$a＝$b。', 'u4l1'));
+        case 1:
+          qs.add(inputQ('两个数相乘的积是 $p，其中一个因数是 $a，另一个是几？', b,
+              '$p÷$a＝$b，想口诀"${kouJue(a, b)}"。', 'u4l1'));
+        case 2:
+          {
+            final n = ri(r, 6, 9);
+            final m = ri(r, 6, 9);
+            qs.add(numChoice('$n 的 $m 倍是多少？', n * m, r,
+                '$n×$m＝${n * m}，口诀"${kouJue(n, m)}"。', 'u4l1',
+                min: 10, max: 99));
+          }
+        default:
+          {
+            final n = ri(r, 6, 9);
+            final m = ri(r, 6, 9);
+            qs.add(numChoice('${n * m} 是 $n 的几倍？', m, r,
+                '${n * m}÷$n＝$m，是 $m 倍。', 'u4l1', min: 2, max: 12));
+          }
+      }
     }
   }
   return dedupe(qs, 12);
@@ -36,7 +78,7 @@ List<Question> genDivFacts789(Random r, int stage) {
 /// u4l2 解决问题（含"倍"的认识）
 List<Question> genDivStory2(Random r, int stage) {
   final qs = <Question>[];
-  for (var t = 0; t < 3; t++) {
+  for (var t = 0; t < 24; t++) {
     final a = ri(r, 6, 9);
     final b = ri(r, 3, 9);
     final p = a * b;
@@ -63,5 +105,5 @@ List<Question> genDivStory2(Random r, int stage) {
           p.toString() + '÷' + b.toString() + '=' + a.toString() + '。', 'u4l2'));
     }
   }
-  return dedupe(qs, 9);
+  return dedupe(qs, 12);
 }
