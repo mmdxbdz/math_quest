@@ -1,3 +1,4 @@
+import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:math_quest/main.dart';
 import 'package:math_quest/store.dart';
@@ -19,6 +20,7 @@ void main() {
 
     // 首页是往上走的岛路：脚下就是第 1 关和它的主题木牌
     expect(find.textContaining('小小调查员'), findsWidgets);
-    expect(find.text('1'), findsWidgets);
+    // 第 1 关的点击热区在（关卡是 3D 画出来的，这里认 key）
+    expect(find.byKey(const Key('lvl-0')), findsOneWidget);
   });
 }
