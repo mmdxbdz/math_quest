@@ -18,11 +18,17 @@ class MapLevel {
   final int stage;
   final String key;
   final int index; // 0 起，全局顺序
-  final double x;
+  final double x; // 投影到屏幕后的位置
   final double y;
   final int stars;
   final bool unlocked;
   final bool current;
+
+  /// 离镜头多远（世界单位）：越大越远
+  final double depth;
+
+  /// 台阶在屏幕上缩小到多大（1.0 = 原始 92px 宽）
+  final double scale;
 
   const MapLevel({
     required this.lesson,
@@ -34,6 +40,8 @@ class MapLevel {
     required this.stars,
     required this.unlocked,
     required this.current,
+    required this.depth,
+    required this.scale,
   });
 
   MapLevel asCurrent() => MapLevel(
@@ -46,6 +54,8 @@ class MapLevel {
         stars: stars,
         unlocked: unlocked,
         current: true,
+        depth: depth,
+        scale: scale,
       );
 }
 
@@ -58,6 +68,8 @@ class MapSign {
   final int total;
   final int firstLevel;
   final int lastLevel;
+  final double depth;
+  final double scale;
 
   const MapSign({
     required this.unit,
@@ -67,25 +79,29 @@ class MapSign {
     required this.total,
     required this.firstLevel,
     required this.lastLevel,
+    this.depth = 1,
+    this.scale = 1,
   });
 }
 
-/// 岛上的立体小物件：0 树 / 1 房子 / 2 灌木 / 3 石头
+/// 路边的立体小物件：0 椰子树 / 1 小屋 / 2 灌木 / 3 石头 / 4 珊瑚 / 5 贝壳 / 6 灯塔
 class MapDeco {
   final int kind;
   final double x;
   final double y;
   final double size;
+  final double depth;
 
   const MapDeco({
     required this.kind,
     required this.x,
     required this.y,
     required this.size,
+    this.depth = 1,
   });
 }
 
-/// 岛上的宠物房：开在"刚好看满 N 关"的那一关和下一关之间，
+/// 路边的宠物房：开在"刚好看满 N 关"的那一关后面，
 /// 门框上挂着住在这间房里的宠物头像。
 class MapPetHouse {
   final String speciesId;
@@ -98,6 +114,8 @@ class MapPetHouse {
 
   /// 下一间就要住进来的（门上挂个金圈提示她）
   final bool next;
+  final double depth;
+  final double scale;
 
   const MapPetHouse({
     required this.speciesId,
@@ -106,11 +124,17 @@ class MapPetHouse {
     required this.order,
     required this.owned,
     this.next = false,
+    this.depth = 1,
+    this.scale = 1,
   });
 }
 
 // ─────────────────────────────────────────────────────────────
-// 布局：路线从岛的最下方往上延伸，第 1 关在最下面，越往后越往上
+// 布局：一条往远处（山上）延伸的路，用真透视投影算位置。
+//   镜头站在路上 s = cam 的地方往远处看：
+//   距离 d 处的东西 → 屏幕 y = 地平线 + f*镜头高/d，
+//   横向 x = 屏幕中心 + f*横向偏移/d，缩放大 scale = f/d。
+//   于是越远越小、越远越靠中间，路自然收敛到地平线——真 3D 透视。
 // ─────────────────────────────────────────────────────────────
 
 class MapLayout {
@@ -120,12 +144,17 @@ class MapLayout {
   final List<MapSign> signs;
   final List<MapDeco> decos;
   final List<MapPetHouse> houses;
-  final List<Offset> trail; // 一条小路，按爬岛的先后顺序
   final int currentIndex;
   final double currentY;
 
-  /// 路只画到这条线为止，再往上还在云雾里（走几关才延伸出来）
-  final double revealY;
+  /// 镜头站在路上哪儿（世界单位，0 = 第 1 关脚下）
+  final double cam;
+
+  /// 地平线在屏幕上多高
+  final double horizonY;
+
+  /// 路一共多长（世界单位）
+  final double roadLength;
 
   const MapLayout({
     required this.width,
@@ -134,49 +163,45 @@ class MapLayout {
     required this.signs,
     required this.decos,
     required this.houses,
-    required this.trail,
     required this.currentIndex,
     required this.currentY,
-    this.revealY = 0,
+    required this.cam,
+    required this.horizonY,
+    required this.roadLength,
   });
 
-  /// 小路上某个高度处的中线 x
-  double trailXAt(double y) {
-    if (trail.isEmpty) return width / 2;
-    if (y <= trail.first.dy) return trail.first.dx;
-    if (y >= trail.last.dy) return trail.last.dx;
-    var lo = 0;
-    var hi = trail.length - 1;
-    while (hi - lo > 1) {
-      final mid = (lo + hi) ~/ 2;
-      if (trail[mid].dy <= y) {
-        lo = mid;
-      } else {
-        hi = mid;
-      }
-    }
-    final a = trail[lo];
-    final b = trail[hi];
-    final t = (y - a.dy) / (b.dy - a.dy == 0 ? 1 : b.dy - a.dy);
-    return a.dx + (b.dx - a.dx) * t;
-  }
+  // ── 3D 相机参数（想调镜头感就动这几个数）
+  static const double focal = 900; // 焦距：越大越"长焦"，远处收敛越慢
+  static const double camHeight = 1.55; // 镜头离地多高（世界单位）
+  static const double levelStep = 2.4; // 一关和一关隔多远
+  static const double roadHalf = 0.62; // 路宽的一半（世界单位）
+  static const double nearClip = 0.7; // 比这更近就贴脸了，不画
 
-// 岛的椭圆范围（画图和布局共用同一套数字）
-/// 台阶之间的间距（往上爬的步长）
-  static const double nodeGap = 132.0;
+  static double horizonOf(double h) => h * 0.30;
 
-  /// 沿着岛上的路一直往上走：世界只有一条蜿蜒向上的小路，
-  /// 第 1 关在岛脚最下面，越往后越靠近山顶的灯塔；屏幕是跟着手指走的镜头。
-  /// 还没走到的地方用云雾挡着——走几步，路就往后面（上面）延伸一截。
-  factory MapLayout.build(Size size, List<Unit> units, ProgressStore store) {
-    const signGap = 92.0; // 木牌到第一关的距离
-    const unitGap = 44.0; // 两个主题之间的留白
-    const houseGap = 140.0; // 宠物房占的那一段路
-    const topPad = 320.0; // 山顶给灯塔留的地方
+  /// 距离 d 处的地面在屏幕上的 y
+  static double projectY(double d, double h) =>
+      horizonOf(h) + focal * camHeight / max(d, nearClip);
 
+  /// 距离 d、横向偏移 lat 的点在屏幕上的 x
+  static double projectX(double lat, double d, double w) =>
+      w / 2 + focal * lat / max(d, nearClip);
+
+  /// 距离 d 处的比例（世界 1 单位 = 多少像素）
+  static double scaleOf(double d) => focal / max(d, nearClip);
+
+  /// 路在 s 处的横向弯曲
+  static double latAt(double s) => 0.30 * sin(s * 0.34);
+
+  /// 屏幕上这一行离镜头多远（画地面用）
+  static double distanceAtY(double y, double h) =>
+      focal * camHeight / max(y - horizonOf(h), 1.0);
+
+  /// 所有关卡排成一条路，一屏能看见远近十来关
+  factory MapLayout.build(Size size, List<Unit> units, ProgressStore store,
+      {double? cam}) {
     final w = size.width;
-    final cx = w / 2;
-    final amp = min(w * 0.115, 46.0);
+    final h = size.height;
 
     var levelTotal = 0;
     for (final u in units) {
@@ -188,169 +213,185 @@ class MapLayout {
     );
     final ownedSpecies = store.pets.map((p) => p.speciesId).toSet();
 
-    var total = topPad + houseCount * houseGap;
-    for (final u in units) {
-      total += signGap + u.lessons.length * 3 * nodeGap + unitGap;
-    }
-    final height = total + 170;
-
-    /// 世界 y：越小 = 越往山上（屏幕越靠上）
-    double worldY(double dist) => height - dist;
-
-    var dist = 170.0; // 从最下面的第 1 关往上量
-    var idx = 0;
-    var houseIdx = 0;
+    // ① 先在路上排好每一关、木牌、宠物房的位置（世界单位 s）
     final levels = <MapLevel>[];
     final signs = <MapSign>[];
     final houses = <MapPetHouse>[];
-    final trail = <Offset>[];
 
+    var s = 0.0;
+    var idx = 0;
+    var houseIdx = 0;
     for (final unit in units) {
       final firstLevel = idx + 1;
-      final signDist = dist;
-      dist += signGap;
-
+      final signS = s - 1.7;
       var unitDone = 0;
+      final unitTotal = unit.lessons.length * 3;
+
       for (final lesson in unit.lessons) {
         for (var stage = 0; stage < 3; stage++) {
-          final x = cx + amp * sin(idx * 0.42);
-          final y = worldY(dist);
           final stars = store.stageStars(lesson.id, stage);
           levels.add(MapLevel(
             lesson: lesson,
             stage: stage,
             key: '${lesson.id}:s$stage',
             index: idx,
-            x: x,
-            y: y,
+            x: 0,
+            y: 0,
             stars: stars,
             unlocked: store.levelUnlocked(orderedLevelKeys, idx),
             current: false,
+            depth: s,
+            scale: 1,
           ));
-          trail.add(Offset(x, y));
           if (stars > 0) unitDone++;
+          s += levelStep;
           idx++;
-          dist += nodeGap;
-          // 每满 6 关：在刚过的这一关和下一关中间开一间宠物房
+          // 每满 6 关：在两关之间开一间宠物房
           if (idx % kPetUnlockEveryLevels == 0 && houseIdx < houseCount) {
             final sp = petSpeciesOf(kPetUnlockOrder[houseIdx + 1]);
-            final hx = cx + amp * sin((idx - 0.5) * 0.42);
-            final hy = worldY(dist + nodeGap * 0.45);
             houses.add(MapPetHouse(
               speciesId: sp.id,
-              x: hx,
-              y: hy,
+              x: 0,
+              y: 0,
               order: houseIdx + 1,
               owned: ownedSpecies.contains(sp.id),
+              depth: s - levelStep * 0.5,
             ));
-            trail.add(Offset(hx, hy));
-            dist += houseGap;
             houseIdx++;
           }
         }
       }
 
-      final signX = cx + amp * sin((firstLevel - 1) * 0.42);
       signs.add(MapSign(
         unit: unit,
-        x: signX,
-        y: worldY(signDist),
+        x: 0,
+        y: 0,
         done: unitDone,
-        total: unit.lessons.length * 3,
+        total: unitTotal,
         firstLevel: firstLevel,
         lastLevel: idx,
+        depth: signS,
       ));
-      trail.add(Offset(signX, worldY(signDist)));
-      dist += unitGap;
+      s += 1.2; // 两个主题之间留一点空
     }
+    final roadLength = s;
 
-    // 当前关：第一个已解锁但还没拿星的关；全通了就停在最后一关
+    // ② 镜头：默认站在"现在这一关"前面几格
     var currentIdx = levels.indexWhere((l) => l.unlocked && l.stars == 0);
     if (currentIdx < 0) {
       currentIdx = levels.indexWhere((l) => l.unlocked);
       if (currentIdx < 0) currentIdx = 0;
     }
-    levels[currentIdx] = levels[currentIdx].asCurrent();
+    final camS = cam ?? (levels[currentIdx].depth - 4.2);
 
-    // 下一间宠物房：还没住人的第一间，门上挂金圈
-    final nextHouse = houses.indexWhere((h) => !h.owned);
+    // ③ 投影到屏幕
+    final projLevels = <MapLevel>[];
+    for (final l in levels) {
+      final d = l.depth - camS;
+      final lat = latAt(l.depth);
+      projLevels.add(MapLevel(
+        lesson: l.lesson,
+        stage: l.stage,
+        key: l.key,
+        index: l.index,
+        x: projectX(lat + (l.index.isEven ? -0.34 : 0.34), d, w),
+        y: projectY(d, h),
+        stars: l.stars,
+        unlocked: l.unlocked,
+        current: l.index == currentIdx,
+        depth: d,
+        scale: scaleOf(d) * 0.34 / 92.0,
+      ));
+    }
+
+    final projSigns = <MapSign>[];
+    for (final sg in signs) {
+      final d = sg.depth - camS;
+      projSigns.add(MapSign(
+        unit: sg.unit,
+        x: projectX(latAt(sg.depth), d, w),
+        y: projectY(d, h),
+        done: sg.done,
+        total: sg.total,
+        firstLevel: sg.firstLevel,
+        lastLevel: sg.lastLevel,
+        depth: d,
+        scale: scaleOf(d) * 1.45 / 240.0,
+      ));
+    }
+
+    final projHouses = <MapPetHouse>[];
+    for (final ph in houses) {
+      final d = ph.depth - camS;
+      projHouses.add(MapPetHouse(
+        speciesId: ph.speciesId,
+        x: projectX(latAt(ph.depth) + 1.55, d, w),
+        y: projectY(d, h),
+        order: ph.order,
+        owned: ph.owned,
+        depth: d,
+        scale: scaleOf(d) * 0.95 / 120.0,
+      ));
+    }
+    final nextHouse = projHouses.indexWhere((hh) => !hh.owned);
     if (nextHouse >= 0) {
-      final h = houses[nextHouse];
-      houses[nextHouse] = MapPetHouse(
-        speciesId: h.speciesId,
-        x: h.x,
-        y: h.y,
-        order: h.order,
-        owned: h.owned,
+      final hh = projHouses[nextHouse];
+      projHouses[nextHouse] = MapPetHouse(
+        speciesId: hh.speciesId,
+        x: hh.x,
+        y: hh.y,
+        order: hh.order,
+        owned: hh.owned,
         next: true,
+        depth: hh.depth,
+        scale: hh.scale,
       );
     }
 
-    trail.sort((a, b) => a.dy.compareTo(b.dy));
-
-    // 还没走到的路：只露出脚下往上 2~3 关，其余藏在云雾里，
-    // 每往前走几关，路就再往上延伸一截。
-    var unlockTop = double.infinity;
-    for (final l in levels) {
-      if (l.unlocked && l.y < unlockTop) unlockTop = l.y;
-    }
-    if (unlockTop == double.infinity) unlockTop = height;
-    final revealY = unlockTop - nodeGap * 2.6;
-
-    // 装饰：沿小路两侧随机种
+    // ④ 路边的小物件：固定随机，位置在世界坐标里，再投影
     final rnd = Random(11);
     final decos = <MapDeco>[];
-    for (var i = 0; i < 130; i++) {
-      final y = 120 + rnd.nextDouble() * (height - 240);
-      final tx = _trailX(trail, cx, y);
-      final side = rnd.nextBool() ? 1 : -1;
-      final off = w * (0.16 + rnd.nextDouble() * 0.09);
+    for (var i = 0; i < 170; i++) {
+      final ds = rnd.nextDouble() * (roadLength + 26) - 10;
+      final side = rnd.nextBool() ? 1.0 : -1.0;
+      final lat = side * (0.85 + rnd.nextDouble() * 2.9);
+      final worldSize = 0.26 + rnd.nextDouble() * 0.34;
+      final d = ds - camS;
+      if (d < nearClip) continue;
       decos.add(MapDeco(
         kind: rnd.nextInt(6),
-        x: tx + side * off,
-        y: y,
-        size: 21 + rnd.nextDouble() * 12,
+        x: projectX(latAt(ds) + lat, d, w),
+        y: projectY(d, h),
+        size: scaleOf(d) * worldSize,
+        depth: d,
       ));
     }
-    // 岛脚和山顶各放几个大件，避免太空
-    decos.add(MapDeco(kind: 1, x: cx - w * 0.19, y: height - 96, size: 30));
-    decos.add(MapDeco(kind: 0, x: cx + w * 0.20, y: height - 130, size: 30));
-    decos.add(MapDeco(kind: 0, x: cx - w * 0.22, y: topPad - 150, size: 30));
-    decos.add(MapDeco(kind: 2, x: cx + w * 0.24, y: topPad - 70, size: 26));
+    // 山顶的灯塔：走到最后几关，它就从小变大
+    final lhS = roadLength + 3.2;
+    final dLh = lhS - camS;
+    if (dLh > nearClip) {
+      decos.add(MapDeco(
+        kind: 6,
+        x: projectX(latAt(lhS), dLh, w),
+        y: projectY(dLh, h),
+        size: scaleOf(dLh) * 1.6,
+        depth: dLh,
+      ));
+    }
 
     return MapLayout(
       width: w,
-      height: height,
-      levels: levels,
-      signs: signs,
+      height: h,
+      levels: projLevels,
+      signs: projSigns,
       decos: decos,
-      houses: houses,
-      trail: trail,
+      houses: projHouses,
       currentIndex: currentIdx,
-      currentY: levels[currentIdx].y,
-      revealY: revealY,
+      currentY: projLevels[currentIdx].y,
+      cam: camS,
+      horizonY: horizonOf(h),
+      roadLength: roadLength,
     );
-  }
-
-  /// 小路上某个高度处的中线 x
-  static double _trailX(List<Offset> trail, double fallback, double y) {
-    if (trail.isEmpty) return fallback;
-    if (y <= trail.first.dy) return trail.first.dx;
-    if (y >= trail.last.dy) return trail.last.dx;
-    var lo = 0;
-    var hi = trail.length - 1;
-    while (hi - lo > 1) {
-      final mid = (lo + hi) ~/ 2;
-      if (trail[mid].dy <= y) {
-        lo = mid;
-      } else {
-        hi = mid;
-      }
-    }
-    final a = trail[lo];
-    final b = trail[hi];
-    final t = (y - a.dy) / (b.dy - a.dy == 0 ? 1 : b.dy - a.dy);
-    return a.dx + (b.dx - a.dx) * t;
   }
 }
 
@@ -378,10 +419,12 @@ class IslandMap extends StatefulWidget {
 
 class _IslandMapState extends State<IslandMap>
     with SingleTickerProviderStateMixin {
-  /// 镜头：屏幕最上方对应的世界 y。世界 y 越小 = 越往山上。
+  /// 镜头站在路上的位置（世界单位）。越大 = 越往前（往山上）走。
   double _cam = 0;
-  double _maxCam = 0;
+  double _roadLength = 0;
   bool _inited = false;
+  static const double _dragScale = 0.021; // 手指拖 1px ≈ 往前挪多少世界单位
+
   late final AnimationController _fling =
       AnimationController.unbounded(vsync: this);
 
@@ -393,13 +436,16 @@ class _IslandMapState extends State<IslandMap>
 
   void _onFlingTick() {
     final v = _fling.value;
-    if (v < 0 || v > _maxCam) {
+    if (v < _minCam || v > _maxCam) {
       _fling.stop();
-      setState(() => _cam = v.clamp(0.0, _maxCam));
+      setState(() => _cam = v.clamp(_minCam, _maxCam));
       return;
     }
     setState(() => _cam = v);
   }
+
+  double get _minCam => -10.0;
+  double get _maxCam => _roadLength + 2.0;
 
   @override
   void dispose() {
@@ -407,30 +453,33 @@ class _IslandMapState extends State<IslandMap>
     super.dispose();
   }
 
-  /// 画面跟着手指走：手指往下扒拉，上面那几关就一节节下来
+  /// 画面跟着手指走：手指往下扒拉 = 往前走，上面的关就一节节下来
   void _onDragUpdate(DragUpdateDetails d) {
     _fling.stop();
-    setState(() => _cam = (_cam - d.delta.dy).clamp(0.0, _maxCam));
+    setState(
+        () => _cam = (_cam + d.delta.dy * _dragScale).clamp(_minCam, _maxCam));
   }
 
   void _onDragEnd(DragEndDetails d) {
-    final v = -d.velocity.pixelsPerSecond.dy;
-    if (v.abs() < 90) return;
+    final v = d.velocity.pixelsPerSecond.dy * _dragScale;
+    if (v.abs() < 1.0) return;
     _fling.value = _cam;
     _fling.animateWith(ClampingScrollSimulation(
       position: _cam,
       velocity: v,
-      tolerance: const Tolerance(velocity: 6, distance: 1),
+      tolerance: const Tolerance(velocity: 0.4, distance: 0.05),
     ));
   }
 
-  void _focusCurrent(MapLayout layout, double viewH) {
-    final target = (layout.currentY - viewH * 0.34).clamp(0.0, _maxCam);
+  /// 一键回到"现在这一关"前面
+  void _focusCurrent(MapLayout layout) {
+    final target = (_cam + layout.levels[layout.currentIndex].depth - 4.2)
+        .clamp(_minCam, _maxCam);
     _fling.stop();
     _fling.value = _cam;
     _fling.animateTo(
       target,
-      duration: const Duration(milliseconds: 480),
+      duration: const Duration(milliseconds: 520),
       curve: Curves.easeOutCubic,
     );
   }
@@ -439,81 +488,83 @@ class _IslandMapState extends State<IslandMap>
   Widget build(BuildContext context) {
     return LayoutBuilder(builder: (context, constraints) {
       final size = Size(constraints.maxWidth, constraints.maxHeight);
-      final layout = MapLayout.build(size, units, widget.store);
-      _maxCam = max(0.0, layout.height - size.height);
+      final layout = MapLayout.build(
+        size,
+        units,
+        widget.store,
+        cam: _inited ? _cam : null,
+      );
       if (!_inited) {
         _inited = true;
-        _cam = (layout.currentY - size.height * 0.34).clamp(0.0, _maxCam);
+        _cam = layout.cam;
       }
-      if (_cam > _maxCam) _cam = _maxCam;
-
-      // 倾斜之后内容顶部会缩进一块，多画一截补上，免得露接缝
-      final extraTop = size.height * 0.55;
-      final boxH = size.height + extraTop;
-      final cam = _cam - extraTop;
-
-      // 云雾那头还没走出来：只画已经走到的路（世界 y 越大 = 越靠下 = 已经走过）
-      final revealLow = layout.revealY - 40;
+      _roadLength = layout.roadLength;
 
       final mapStack = Stack(
         clipBehavior: Clip.hardEdge,
         children: [
           Positioned.fill(
             child: RepaintBoundary(
-              child: CustomPaint(
-                painter: _WorldPainter(layout: layout, cam: cam, viewH: boxH),
-              ),
+              child: CustomPaint(painter: _WorldPainter(layout: layout)),
             ),
           ),
-          for (final s in layout.signs)
-            if (s.y - cam > -160 && s.y - cam < boxH + 160 && s.y > revealLow)
-              _signPost(s, cam),
-          for (final h in layout.houses)
-            if (h.y - cam > -240 && h.y - cam < boxH + 240 && h.y > revealLow)
-              _petHouse(h, cam),
-          for (final l in layout.levels)
-            if (l.y - cam > -220 && l.y - cam < boxH + 220 && l.y > revealLow)
-              _levelNode(l, cam),
+          for (final s in _farToNear(layout.signs)) _signPost(s),
+          for (final h in _farToNear(layout.houses)) _petHouse(h),
+          for (final l in _farToNear(layout.levels)) _levelNode(l),
         ],
       );
 
       return Stack(
         children: [
           const Positioned.fill(child: RepaintBoundary(child: _Backdrop())),
-          Positioned(
-            left: 0,
-            right: 0,
-            top: -extraTop,
-            bottom: 0,
+          Positioned.fill(
             child: GestureDetector(
               behavior: HitTestBehavior.opaque,
               onVerticalDragStart: (_) => _fling.stop(),
               onVerticalDragUpdate: _onDragUpdate,
               onVerticalDragEnd: _onDragEnd,
-              // 整个画面做一点透视，越往上越远，像顺着山路往上走
-              child: Transform(
-                alignment: Alignment.bottomCenter,
-                transform: Matrix4.identity()
-                  ..setEntry(3, 2, 0.0011)
-                  ..rotateX(-0.26)
-                  ..scaleByDouble(1.18, 1.18, 1.18, 1),
-                child: mapStack,
-              ),
+              child: mapStack,
             ),
           ),
           Positioned(
             right: 14,
             bottom: widget.bottomInset,
-            child: _locateButton(layout, size.height),
+            child: _locateButton(layout),
           ),
         ],
       );
     });
   }
 
-  Widget _locateButton(MapLayout layout, double viewH) {
+  /// 远的先画、近的后画（3D 的遮挡顺序）
+  List<T> _farToNear<T>(List<T> items) {
+    final list = <T>[];
+    for (final e in items) {
+      final d = _depthOf(e);
+      final y = _yOf(e);
+      if (d > MapLayout.nearClip && y < 2200) list.add(e);
+    }
+    list.sort((a, b) => _depthOf(b).compareTo(_depthOf(a)));
+    return list;
+  }
+
+  double _depthOf(dynamic o) {
+    if (o is MapLevel) return o.depth;
+    if (o is MapSign) return o.depth;
+    if (o is MapPetHouse) return o.depth;
+    return 1;
+  }
+
+  double _yOf(dynamic o) {
+    if (o is MapLevel) return o.y;
+    if (o is MapSign) return o.y;
+    if (o is MapPetHouse) return o.y;
+    return 0;
+  }
+
+  Widget _locateButton(MapLayout layout) {
     return GestureDetector(
-      onTap: () => _focusCurrent(layout, viewH),
+      onTap: () => _focusCurrent(layout),
       child: Container(
         width: 46,
         height: 46,
@@ -535,107 +586,139 @@ class _IslandMapState extends State<IslandMap>
     );
   }
 
-  Widget _signPost(MapSign s, double cam) {
-    final sy = s.y - cam;
+  Widget _signPost(MapSign s) {
+    final fade = _fadeFor(s.depth);
+    if (fade <= 0) return const SizedBox.shrink();
     return Positioned(
       left: s.x - 120,
-      top: sy - 30,
+      top: s.y - 30,
       width: 240,
       height: 60,
-      child: Center(
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
-          decoration: BoxDecoration(
-            gradient: const LinearGradient(
-              begin: Alignment.topCenter,
-              end: Alignment.bottomCenter,
-              colors: [Color(0xFFC08A55), Color(0xFF9A6535)],
-            ),
-            borderRadius: BorderRadius.circular(10),
-            border: Border.all(color: const Color(0xFF6F4520), width: 2),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.22),
-                blurRadius: 8,
-                offset: const Offset(0, 4),
+      child: Opacity(
+        opacity: fade,
+        child: Transform.scale(
+          scale: s.scale.clamp(0.22, 1.5),
+          child: Center(
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+            decoration: BoxDecoration(
+              gradient: const LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [Color(0xFFC08A55), Color(0xFF9A6535)],
               ),
-            ],
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(s.unit.emoji, style: const TextStyle(fontSize: 18)),
-              const SizedBox(width: 8),
-              Flexible(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      s.unit.title,
-                      maxLines: 1,
-                      softWrap: false,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.white,
-                      ),
-                    ),
-                    Text(
-                      '第 ' +
-                          s.firstLevel.toString() +
-                          '–' +
-                          s.lastLevel.toString() +
-                          ' 关 · ' +
-                          s.done.toString() +
-                          '/' +
-                          s.total.toString(),
-                      maxLines: 1,
-                      softWrap: false,
-                      overflow: TextOverflow.ellipsis,
-                      style:
-                          const TextStyle(fontSize: 10, color: Colors.white70),
-                    ),
-                  ],
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: const Color(0xFF6F4520), width: 2),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.22),
+                  blurRadius: 8,
+                  offset: const Offset(0, 4),
                 ),
-              ),
-            ],
+              ],
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(s.unit.emoji, style: const TextStyle(fontSize: 18)),
+                const SizedBox(width: 8),
+                Flexible(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        s.unit.title,
+                        maxLines: 1,
+                        softWrap: false,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.white,
+                        ),
+                      ),
+                      Text(
+                        '第 ' +
+                            s.firstLevel.toString() +
+                            '–' +
+                            s.lastLevel.toString() +
+                            ' 关 · ' +
+                            s.done.toString() +
+                            '/' +
+                            s.total.toString(),
+                        maxLines: 1,
+                        softWrap: false,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                            fontSize: 10, color: Colors.white70),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    ),
+    );
+  }
+
+  Widget _petHouse(MapPetHouse h) {
+    final fade = _fadeFor(h.depth);
+    if (fade <= 0) return const SizedBox.shrink();
+    final sp = petSpeciesOf(h.speciesId);
+    return Positioned(
+      left: h.x - 60,
+      top: h.y - 58,
+      width: 120,
+      child: Opacity(
+        opacity: fade,
+        child: Transform.scale(
+          scale: h.scale.clamp(0.24, 1.5),
+          alignment: Alignment.topCenter,
+          child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+            onTap: widget.onPetHouseTap,
+            child: _PetHouseNode(species: sp, owned: h.owned, next: h.next),
           ),
         ),
       ),
     );
   }
 
-  Widget _petHouse(MapPetHouse h, double cam) {
-    final sy = h.y - cam;
-    final sp = petSpeciesOf(h.speciesId);
-    return Positioned(
-      left: h.x - 60,
-      top: sy - 58,
-      width: 120,
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTap: widget.onPetHouseTap,
-        child: _PetHouseNode(species: sp, owned: h.owned, next: h.next),
-      ),
-    );
+  /// 太远的东西就淡出（消失在雾里），别挤成一串
+  double _fadeFor(double depth) {
+    if (depth > 21) return 0;
+    if (depth <= 13) return 1;
+    return 1 - (depth - 13) / 8 * 0.85;
   }
-
-  Widget _levelNode(MapLevel l, double cam) {
-    final sy = l.y - cam;
+  Widget _levelNode(MapLevel l) {
+    final fade = _fadeFor(l.depth);
+    if (fade <= 0) return const SizedBox.shrink();
+    final k = l.scale.clamp(0.12, 2.0);
     Widget pedestal = _LevelPedestal(level: l);
     if (l.current) {
       pedestal = _Bob(child: pedestal);
     }
     return Positioned(
       left: l.x - 46,
-      top: sy - 32,
+      // 台阶的圆心落在投影出来的那个点上
+      top: l.y - 40 * k,
       width: 92,
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTap: () => widget.onStartLevel(l),
-        child: pedestal,
+      height: 110,
+      child: Opacity(
+        opacity: fade,
+        child: Transform.scale(
+          scale: k,
+          alignment: Alignment.topCenter,
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: () => widget.onStartLevel(l),
+            child: pedestal,
+          ),
+        ),
       ),
     );
   }
@@ -1013,214 +1096,249 @@ class _BobState extends State<_Bob> with SingleTickerProviderStateMixin {
 
 class _WorldPainter extends CustomPainter {
   final MapLayout layout;
-  final double cam;
-  final double viewH;
 
-  const _WorldPainter({
-    required this.layout,
-    required this.cam,
-    required this.viewH,
-  });
+  const _WorldPainter({required this.layout});
 
   @override
   void paint(Canvas canvas, Size size) {
-    canvas.save();
-    canvas.translate(0, -cam);
-
     final w = size.width;
-    final cx = w / 2;
-    final bottom = cam + viewH + 320;
-    // 只画"已经走到的路"：再往上还在云雾里，走几关才延伸出来
-    final revealed = layout.revealY > cam - 320;
-    final top = revealed ? max(cam - 320, layout.revealY) : cam - 320;
-    final span = bottom - top;
+    final h = size.height;
+    final horizon = layout.horizonY;
 
-    // 云雾之外的整段路都不画（包括小路和装饰）
-    canvas.save();
-    if (revealed) {
-      canvas.clipRect(
-          Rect.fromLTWH(-60, layout.revealY, w + 120, viewH + 800));
-    }
-
-    // 海水下的影子
-    canvas.save();
-    canvas.translate(8, 30);
-    canvas.drawPath(
-      _ribbon(w, top, bottom, w * 0.345),
-      Paint()..color = const Color(0xFF2C7FAE).withValues(alpha: 0.16),
-    );
-    canvas.restore();
-
-    // 沙滩外面的礁石带
-    canvas.drawPath(
-      _ribbon(w, top, bottom, w * 0.372),
+    // ── 远处的海（地平线下面一条窄窄的水带，靠云和雾跟草地接上）
+    final seaRect = Rect.fromLTWH(0, horizon, w, h * 0.075);
+    canvas.drawRect(
+      seaRect,
       Paint()
-        ..shader = LinearGradient(
+        ..shader = const LinearGradient(
           begin: Alignment.topCenter,
           end: Alignment.bottomCenter,
-          colors: const [Color(0xFFC4CFD8), Color(0xFF9DAAB7)],
-        ).createShader(Rect.fromLTWH(0, top, w, span)),
-    );
-    // 岛外面两圈白浪
-    for (var i = 0; i < 2; i++) {
-      canvas.drawPath(
-        _ribbon(w, top, bottom, w * (0.382 + i * 0.022)),
-        Paint()
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 8
-          ..color = Colors.white.withValues(alpha: i == 0 ? 0.6 : 0.3),
-      );
-    }
-
-    // 岛的厚度
-    canvas.save();
-    canvas.translate(-12, 18);
-    canvas.drawPath(
-      _ribbon(w, top, bottom, w * 0.335),
-      Paint()
-        ..shader = LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: const [Color(0xFFDDBB80), Color(0xFFB78C51)],
-        ).createShader(Rect.fromLTWH(0, top, w, span)),
-    );
-    canvas.restore();
-
-    // 沙滩
-    canvas.drawPath(
-      _ribbon(w, top, bottom, w * 0.335),
-      Paint()
-        ..shader = LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: const [Color(0xFFFFF4DA), Color(0xFFF3DEB1)],
-        ).createShader(Rect.fromLTWH(0, top, w, span)),
+          colors: [Color(0xFF9FE4E1), Color(0xFF62C8D0)],
+        ).createShader(seaRect),
     );
 
-    // 草地
-    final grass = _ribbon(w, top, bottom, w * 0.335 - 22);
-    canvas.drawPath(
-      grass,
+    // ── 地面：草地从地平线一直铺到脚下
+    final groundRect = Rect.fromLTWH(0, horizon + 4, w, h - horizon);
+    canvas.drawRect(
+      groundRect,
       Paint()
-        ..shader = LinearGradient(
+        ..shader = const LinearGradient(
           begin: Alignment.topCenter,
           end: Alignment.bottomCenter,
-          colors: const [
-            Color(0xFFCEF0A7),
-            Color(0xFFA3DC80),
-            Color(0xFF7EC565),
+          colors: [
+            Color(0xFFB6E893),
+            Color(0xFF95D672),
+            Color(0xFF6FC050),
           ],
-          stops: const [0.0, 0.5, 1.0],
-        ).createShader(Rect.fromLTWH(0, top, w, span)),
-    );
-    canvas.drawPath(
-      grass,
-      Paint()
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 4
-        ..color = Color(0xFFE6F9CB).withValues(alpha: 0.8),
+          stops: [0.0, 0.45, 1.0],
+        ).createShader(groundRect),
     );
 
-    // 草簇（固定随机，不闪烁）
-    for (var y = (top / 46).floor() * 46.0; y < bottom; y += 46) {
-      final wob = sin(y * 0.0068) * 0.085 + cos(y * 0.0029) * 0.055;
-      final hw = (w * 0.335 - 34) * (1 + wob);
-      final cen = cx + sin(y * 0.0042) * w * 0.335 * 0.10;
-      for (var i = 0; i < 3; i++) {
-        final side = i == 0 ? -1.0 : (i == 1 ? 1.0 : 0.0);
-        final gx = cen + side * hw * (0.55 + 0.16 * ((y ~/ 46) % 3));
-        canvas.drawOval(
-          Rect.fromCenter(
-            center: Offset(gx, y + ((y.toInt() + i * 7) % 11)),
-            width: 12,
-            height: 5,
-          ),
-          Paint()..color = const Color(0xFF95D378).withValues(alpha: 0.55),
-        );
-      }
-    }
+    // ── 沿着 3D 透视的小路（土路肩 + 石板路面 + 石板缝）
+    _paintRoad(canvas, w, h);
 
-    // 岸边一块块礁石
-    for (var y = (top / 78).floor() * 78.0; y < bottom; y += 78) {
-      final wob = sin(y * 0.0068) * 0.085 + cos(y * 0.0029) * 0.055;
-      final hw = w * 0.335 * (1 + wob);
-      final cen = cx + sin(y * 0.0042) * w * 0.335 * 0.10;
-      for (final side in const [-1.0, 1.0]) {
-        final rr = 8.0 + ((y.toInt() ~/ 78) % 3) * 3.5;
-        final rx = cen + side * hw * 0.98;
-        canvas.drawOval(
-          Rect.fromCenter(
-              center: Offset(rx, y + 6), width: rr * 2.3, height: rr * 1.4),
-          Paint()..color = const Color(0xFFAFBAC4),
-        );
-        canvas.drawOval(
-          Rect.fromCenter(
-              center: Offset(rx - 2, y - 2), width: rr * 1.5, height: rr * 0.95),
-          Paint()..color = const Color(0xFFD2DAE2),
-        );
-      }
-    }
+    // ── 草地上按透视铺的小草簇
+    _paintGrassDetail(canvas, w, h);
 
-    _paintTrail(canvas);
-    // 山顶的灯塔：路一直走到最上面就能看见
-    if (top < 300) {
-      _paintLighthouse(canvas, cx + w * 0.22, 150);
-    }
-    _paintDecos(canvas, top);
+    // ── 路边的彩色鹅卵石
+    _paintPebbles(canvas, w, h);
 
-    canvas.restore(); // 结束"只画走过的路"的裁剪
+    // ── 台阶 / 房子落在地上的接触阴影
+    _paintContactShadows(canvas);
 
-    // 路走到这儿就断了：前面是白白的云雾，走几关云雾退上去、路再延伸一截
-    if (revealed) {
-      canvas.save();
-      canvas.clipRect(Rect.fromLTWH(-60, layout.revealY - 560, w + 120, 660));
-      final crnd = Random(7);
-      // 一排胖云把路"截断"，看着像路还在云雾里面往前长
-      for (var row = 0; row < 3; row++) {
-        for (var i = 0; i < 8; i++) {
-          final cxx = -30 + (i / 7) * (w + 60) + (crnd.nextDouble() - 0.5) * 26;
-          final cyy = layout.revealY -
-              14 +
-              row * 30 +
-              (crnd.nextDouble() - 0.5) * 22;
-          final rw = 116.0 + crnd.nextDouble() * 96;
-          canvas.drawOval(
-            Rect.fromCenter(
-                center: Offset(cxx, cyy), width: rw, height: rw * 0.46),
-            Paint()..color = const Color(0xFFF6FDFF).withValues(alpha: 0.97),
-          );
-        }
-      }
-      for (var i = 0; i < 6; i++) {
-        final cxx = -20 + (i / 5) * (w + 40);
-        final cyy = layout.revealY - 120 - crnd.nextDouble() * 90;
-        final rw = 150.0 + crnd.nextDouble() * 120;
-        canvas.drawOval(
-          Rect.fromCenter(
-              center: Offset(cxx, cyy), width: rw, height: rw * 0.42),
-          Paint()..color = const Color(0xFFF3FBFE).withValues(alpha: 0.9),
-        );
-      }
-      canvas.restore();
-    }
+    // ── 路边的小物件 + 山顶灯塔（远的先画，近的后画）
+    _paintDecos(canvas, horizon);
 
-    canvas.restore();
+    // ── 地平线附近的雾和云：远处的路"还没从云雾里长出来"
+    _paintHorizon(canvas, w, h);
   }
 
-  /// 蜿蜒的岛身：两边随高度轻轻摆动，看起来是一条盘上山的岛路
-  Path _ribbon(double w, double top, double bottom, double halfW) {
-    const step = 26.0;
-    final cx = w / 2;
+  /// 按透视采样每一行屏幕，画出路的梯形
+  Path _bandPath(double w, double h, double halfWorld, double lat0) {
     final left = <Offset>[];
     final right = <Offset>[];
-    for (var y = top - step; y <= bottom + step; y += step) {
-      final wob = sin(y * 0.0068) * 0.085 + cos(y * 0.0029) * 0.055;
-      final hw = halfW * (1 + wob);
-      final cen = cx + sin(y * 0.0042) * w * 0.335 * 0.10;
-      left.add(Offset(cen - hw, y));
-      right.add(Offset(cen + hw, y));
+    for (var y = h + 40; y >= layout.horizonY + 3; y -= 4) {
+      final d = MapLayout.distanceAtY(y, h);
+      final s = layout.cam + d;
+      final latc = MapLayout.latAt(s) + lat0;
+      final halfPx = MapLayout.focal * halfWorld / d;
+      final centerPx = w / 2 + MapLayout.focal * latc / d;
+      left.add(Offset(centerPx - halfPx, y));
+      right.add(Offset(centerPx + halfPx, y));
     }
     return Path()..addPolygon([...left, ...right.reversed], true);
+  }
+
+  void _paintRoad(Canvas canvas, double w, double h) {
+    // 土路肩
+    canvas.drawPath(
+      _bandPath(w, h, MapLayout.roadHalf * 1.18, 0),
+      Paint()..color = const Color(0xFFE3D3AC),
+    );
+    // 石板路面
+    final road = _bandPath(w, h, MapLayout.roadHalf, 0);
+    canvas.drawPath(
+      road,
+      Paint()
+        ..shader = const LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [Color(0xFFEFE7D2), Color(0xFFFBF7EC), Color(0xFFEDE4CE)],
+          stops: [0.0, 0.55, 1.0],
+        )
+            .createShader(Rect.fromLTWH(0, layout.horizonY, w, h - layout.horizonY)),
+    );
+    // 两边压暗：一条路鼓起来的边
+    canvas.drawPath(
+      road,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 2.4
+        ..color = const Color(0xFFB39B6E).withValues(alpha: 0.55),
+    );
+
+    // 一道高光，让路看着是鼓起来的
+    canvas.save();
+    canvas.translate(-3, -2);
+    canvas.drawPath(
+      road,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 3
+        ..color = const Color(0xFFFFFDF6).withValues(alpha: 0.75),
+    );
+    canvas.restore();
+
+    // 横向石缝：按世界距离均分，越远越密（透视自然产生）
+    final seam = Paint()
+      ..color = const Color(0xFFBFB197).withValues(alpha: 0.62)
+      ..strokeWidth = 2.0;
+    for (var i = 0; i < 240; i++) {
+      final s = i * 0.55;
+      final d = s - layout.cam;
+      if (d < 1.2 || d > 46) continue;
+      final y = MapLayout.projectY(d, h);
+      if (y > h + 20) continue;
+      final latc = MapLayout.latAt(s);
+      final halfPx = MapLayout.focal * MapLayout.roadHalf * 0.94 / d;
+      final centerPx = w / 2 + MapLayout.focal * latc / d;
+      canvas.drawLine(
+        Offset(centerPx - halfPx, y),
+        Offset(centerPx + halfPx, y),
+        seam,
+      );
+    }
+  }
+
+  /// 路边一圈彩色鹅卵石：近处的看得清，远处缩成小点
+  void _paintPebbles(Canvas canvas, double w, double h) {
+    const colors = [
+      Color(0xFFF4A7BC),
+      Color(0xFF93D6F2),
+      Color(0xFFF8D97B),
+      Color(0xFFBFE7A1),
+      Color(0xFFE5A9E3),
+      Color(0xFFFFC79A),
+    ];
+    for (var i = 0; i < 520; i++) {
+      final s = i * 0.30;
+      final d = s - layout.cam;
+      if (d < 1.0 || d > 20) continue;
+      final y = MapLayout.projectY(d, h);
+      if (y > h + 24) continue;
+      final latc = MapLayout.latAt(s);
+      final k = MapLayout.focal / d;
+      for (final side in const [-1.0, 1.0]) {
+        final latp = latc + side * (MapLayout.roadHalf + 0.055);
+        final px = w / 2 + MapLayout.focal * latp / d;
+        final r = k * 0.042;
+        canvas.drawOval(
+          Rect.fromCenter(center: Offset(px, y), width: r * 2.1, height: r * 1.4),
+          Paint()..color = colors[(i + (side > 0 ? 3 : 0)) % colors.length],
+        );
+      }
+    }
+  }
+
+  /// 台阶和房子在地上的接触阴影：一下子就有"站在地上"的重量感
+  void _paintContactShadows(Canvas canvas) {
+    final paint = Paint()..color = Colors.black.withValues(alpha: 0.11);
+    for (final l in layout.levels) {
+      if (l.depth < 1.0 || l.depth > 20) continue;
+      final wpx = 92 * l.scale * 1.2;
+      canvas.drawOval(
+        Rect.fromCenter(
+            center: Offset(l.x, l.y + 2 * l.scale * 40),
+            width: wpx,
+            height: wpx * 0.30),
+        paint,
+      );
+    }
+    for (final hh in layout.houses) {
+      if (hh.depth < 1.0 || hh.depth > 20) continue;
+      final wpx = 120 * hh.scale * 1.15;
+      canvas.drawOval(
+        Rect.fromCenter(
+            center: Offset(hh.x, hh.y + 4),
+            width: wpx,
+            height: wpx * 0.28),
+        paint,
+      );
+    }
+  }
+  /// 草地上按世界坐标散布的草簇（近大远小）
+  void _paintGrassDetail(Canvas canvas, double w, double h) {
+    final rnd = Random(29);
+    for (var i = 0; i < 260; i++) {
+      final ds = rnd.nextDouble() * (layout.roadLength + 26) - 10;
+      final side = rnd.nextBool() ? 1.0 : -1.0;
+      final lat = side * (0.78 + rnd.nextDouble() * 3.4);
+      final d = ds - layout.cam;
+      if (d < 1.2) continue;
+      final y = MapLayout.projectY(d, h);
+      if (y > h + 30 || y < layout.horizonY + 6) continue;
+      final px = MapLayout.projectX(MapLayout.latAt(ds) + lat, d, w);
+      final k = MapLayout.focal / d;
+      canvas.drawOval(
+        Rect.fromCenter(center: Offset(px, y), width: k * 0.10, height: k * 0.045),
+        Paint()..color = const Color(0xFF8FD073).withValues(alpha: 0.55),
+      );
+    }
+  }
+
+  /// 地平线：白白的雾 + 一排胖云，远处的路就消失在里头
+  void _paintHorizon(Canvas canvas, double w, double h) {
+    final horizon = layout.horizonY;
+    final fogRect = Rect.fromLTWH(0, horizon - 6, w, h * 0.13);
+    canvas.drawRect(
+      fogRect,
+      Paint()
+        ..shader = const LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [Color(0xFFF6FDFF), Color(0x00F6FDFF)],
+        ).createShader(fogRect),
+    );
+
+    final crnd = Random(7);
+    for (var i = 0; i < 8; i++) {
+      final cxx = -20 + (i / 7) * (w + 40) + (crnd.nextDouble() - 0.5) * 24;
+      final cyy = horizon - 10 + (crnd.nextDouble() - 0.5) * 18;
+      final rw = 78.0 + crnd.nextDouble() * 62;
+      canvas.drawOval(
+        Rect.fromCenter(center: Offset(cxx, cyy), width: rw, height: rw * 0.42),
+        Paint()..color = const Color(0xFFF8FEFF).withValues(alpha: 0.95),
+      );
+    }
+  }
+
+  /// 山顶的灯塔按世界比例缩放
+  void _paintLighthouseScaled(Canvas canvas, double x, double baseY, double k) {
+    canvas.save();
+    canvas.translate(x, baseY);
+    canvas.scale(k);
+    _paintLighthouse(canvas, 0, 0);
+    canvas.restore();
   }
 
   /// 山顶的灯塔（白塔身 + 橘色圆顶 + 暖黄灯光）
@@ -1322,88 +1440,6 @@ class _WorldPainter extends CustomPainter {
     canvas.restore();
   }
 
-  void _paintTrail(Canvas canvas) {
-    final pts = layout.trail;
-    if (pts.length < 2) return;
-    final path = _smooth(pts);
-
-    // 阴影 / 厚度
-    canvas.save();
-    canvas.translate(-8, 13);
-    canvas.drawPath(
-      path,
-      Paint()
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 42
-        ..strokeCap = StrokeCap.round
-        ..strokeJoin = StrokeJoin.round
-        ..color = const Color(0xFFB3AC9C),
-    );
-    canvas.restore();
-
-    // 路面：浅色的石板路
-    canvas.drawPath(
-      path,
-      Paint()
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 22
-        ..strokeCap = StrokeCap.round
-        ..strokeJoin = StrokeJoin.round
-        ..shader = const LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [Color(0xFFFBF7EC), Color(0xFFDFD8C7)],
-        ).createShader(const Rect.fromLTWH(0, 0, 400, 400)),
-    );
-
-    // 高光
-    canvas.save();
-    canvas.translate(-3, -4);
-    canvas.drawPath(
-      path,
-      Paint()
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 9
-        ..strokeCap = StrokeCap.round
-        ..strokeJoin = StrokeJoin.round
-        ..color = const Color(0xFFFFFBF0).withValues(alpha: 0.9),
-    );
-    canvas.restore();
-
-    // 一片片木栈道/石板的接缝
-    final seam = Paint()
-      ..color = const Color(0xFFBFB4A0).withValues(alpha: 0.5)
-      ..strokeWidth = 2.0
-      ..strokeCap = StrokeCap.round;
-    for (var i = 0; i < pts.length - 1; i++) {
-      final a = pts[i];
-      final b = pts[i + 1];
-      final seg = (b - a).distance;
-      if (seg < 1) continue;
-      final d = (b - a) / seg;
-      final nrm = Offset(-d.dy, d.dx);
-      final steps = (seg / 34).floor();
-      for (var k = 1; k < steps; k++) {
-        final p = Offset.lerp(a, b, k / steps)!;
-        canvas.drawLine(p - nrm * 10, p + nrm * 10, seam);
-      }
-    }
-  }
-
-  Path _smooth(List<Offset> pts) {
-    final path = Path()..moveTo(pts.first.dx, pts.first.dy);
-    for (var i = 0; i < pts.length - 1; i++) {
-      final p0 = i == 0 ? pts[i] : pts[i - 1];
-      final p1 = pts[i];
-      final p2 = pts[i + 1];
-      final p3 = (i + 2 < pts.length) ? pts[i + 2] : p2;
-      final c1 = Offset(p1.dx + (p2.dx - p0.dx) / 6, p1.dy + (p2.dy - p0.dy) / 6);
-      final c2 = Offset(p2.dx - (p3.dx - p1.dx) / 6, p2.dy - (p3.dy - p1.dy) / 6);
-      path.cubicTo(c1.dx, c1.dy, c2.dx, c2.dy, p2.dx, p2.dy);
-    }
-    return path;
-  }
-
   void _paintDecos(Canvas canvas, double top) {
     final visible = layout.decos
         .where((d) => d.y >= top - 40)
@@ -1419,6 +1455,9 @@ class _WorldPainter extends CustomPainter {
         Paint()..color = Colors.black.withValues(alpha: 0.16),
       );
       switch (d.kind) {
+        case 6: // 山顶灯塔
+          _paintLighthouseScaled(canvas, d.x, d.y, d.size / 143.0);
+          break;
         case 0: // 椰子树：弯树干 + 一圈叶子 + 两个椰子
           final top = Offset(d.x + s * 0.26, d.y - s * 2.0);
           final trunkPath = Path()
@@ -1616,9 +1655,8 @@ class _WorldPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(_WorldPainter old) =>
-      old.cam != cam ||
-      old.viewH != viewH ||
-      old.layout.revealY != layout.revealY ||
+      old.layout.cam != layout.cam ||
+      old.layout.levels.length != layout.levels.length ||
       old.layout.height != layout.height;
 }
 
