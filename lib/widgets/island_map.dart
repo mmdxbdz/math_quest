@@ -289,25 +289,25 @@ class MapLayout {
     final rnd = Random(11);
     final decos = <MapDeco>[];
     final signCount = signs.length;
-    for (var i = 0; i < 64; i++) {
+    for (var i = 0; i < 110; i++) {
       final y = 90 + rnd.nextDouble() * (height - 180);
       final tx = _trailAt(trailTopDown, w / 2, y);
       final side = rnd.nextBool() ? 1 : -1;
       final off = w * (0.16 + rnd.nextDouble() * 0.09);
       decos.add(MapDeco(
-        kind: rnd.nextInt(4),
+        kind: rnd.nextInt(6),
         x: tx + side * off,
         y: y,
-        size: 16 + rnd.nextDouble() * 10,
+        size: 21 + rnd.nextDouble() * 12,
       ));
     }
     // 岛底和岛顶各放几个大件，避免太空
     if (signCount > 0) {
-      decos.add(MapDeco(kind: 1, x: cx - w * 0.2, y: height - 70, size: 26));
-      decos.add(MapDeco(kind: 0, x: cx + w * 0.2, y: height - 90, size: 24));
+      decos.add(MapDeco(kind: 1, x: cx - w * 0.2, y: height - 70, size: 30));
+      decos.add(MapDeco(kind: 0, x: cx + w * 0.2, y: height - 90, size: 30));
       // 山顶（最后的关卡上方）
-      decos.add(MapDeco(kind: 1, x: cx - w * 0.18, y: 84, size: 24));
-      decos.add(MapDeco(kind: 0, x: cx + w * 0.2, y: 66, size: 22));
+      decos.add(MapDeco(kind: 1, x: cx - w * 0.18, y: 84, size: 28));
+      decos.add(MapDeco(kind: 2, x: cx + w * 0.26, y: 150, size: 26));
     }
 
     return MapLayout(
@@ -1020,63 +1020,207 @@ class _WorldPainter extends CustomPainter {
     final w = size.width;
     final top = cam - 260;
     final bottom = cam + viewH + 260;
+    final cx = w / 2;
 
     // 海水下的影子
     canvas.save();
-    canvas.translate(6, 26);
+    canvas.translate(8, 30);
     canvas.drawPath(
-      _ribbon(w, top, bottom, w * 0.335),
-      Paint()..color = const Color(0xFF2C7FAE).withValues(alpha: 0.30),
+      _ribbon(w, top, bottom, w * 0.345),
+      Paint()..color = const Color(0xFF2C7FAE).withValues(alpha: 0.16),
     );
     canvas.restore();
 
-    // 岛的厚度：把整块岛往左下挤出一点，形成侧壁
-    canvas.save();
-    canvas.translate(-10, 16);
+    // 沙滩外面的礁石带（参考图里岛边那些灰石头）
     canvas.drawPath(
-      _ribbon(w, top, bottom, w * 0.33),
+      _ribbon(w, top, bottom, w * 0.372),
       Paint()
         ..shader = const LinearGradient(
           begin: Alignment.topCenter,
           end: Alignment.bottomCenter,
-          colors: [Color(0xFFC9A470), Color(0xFF9A7540)],
+          colors: [Color(0xFFC4CFD8), Color(0xFF9DAAB7)],
+        ).createShader(Rect.fromLTWH(0, top, w, bottom - top)),
+    );
+    // 岛外面两圈白浪
+    for (var i = 0; i < 2; i++) {
+      canvas.drawPath(
+        _ribbon(w, top, bottom, w * (0.382 + i * 0.022)),
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 8
+          ..color = Colors.white.withValues(alpha: i == 0 ? 0.6 : 0.3),
+      );
+    }
+
+    // 岛的厚度：把整块岛往左下挤出一点，形成侧壁
+    canvas.save();
+    canvas.translate(-12, 18);
+    canvas.drawPath(
+      _ribbon(w, top, bottom, w * 0.335),
+      Paint()
+        ..shader = const LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [Color(0xFFDDBB80), Color(0xFFB78C51)],
         ).createShader(Rect.fromLTWH(0, top, w, bottom - top)),
     );
     canvas.restore();
 
     // 沙滩
     canvas.drawPath(
-      _ribbon(w, top, bottom, w * 0.33),
+      _ribbon(w, top, bottom, w * 0.335),
       Paint()
         ..shader = const LinearGradient(
           begin: Alignment.topCenter,
           end: Alignment.bottomCenter,
-          colors: [Color(0xFFFBEBC4), Color(0xFFEBD5A4)],
+          colors: [Color(0xFFFFF4DA), Color(0xFFF3DEB1)],
         ).createShader(Rect.fromLTWH(0, top, w, bottom - top)),
     );
 
     // 草地
-    final grass = _ribbon(w, top, bottom, w * 0.33 - 20);
+    final grass = _ribbon(w, top, bottom, w * 0.335 - 22);
     canvas.drawPath(
       grass,
       Paint()
         ..shader = const LinearGradient(
           begin: Alignment.topCenter,
           end: Alignment.bottomCenter,
-          colors: [Color(0xFFD3F0BE), Color(0xFFA6DA8D), Color(0xFF7FC169)],
+          colors: [Color(0xFFCEF0A7), Color(0xFFA3DC80), Color(0xFF7EC565)],
+          stops: [0.0, 0.5, 1.0],
         ).createShader(Rect.fromLTWH(0, top, w, bottom - top)),
     );
     canvas.drawPath(
       grass,
       Paint()
         ..style = PaintingStyle.stroke
-        ..strokeWidth = 3
-        ..color = const Color(0xFF6FB259).withValues(alpha: 0.35),
+        ..strokeWidth = 4
+        ..color = Color(0xFFE6F9CB).withValues(alpha: 0.8),
     );
 
+    // 草地上的小草簇（固定随机，不闪烁）
+    final grassTop = cam - 40;
+    final grassBottom = cam + viewH + 40;
+    for (var y = (grassTop / 46).floor() * 46.0; y < grassBottom; y += 46) {
+      final wob = sin(y * 0.0068) * 0.085 + cos(y * 0.0029) * 0.055;
+      final hw = (w * 0.335 - 34) * (1 + wob);
+      final cen = cx + sin(y * 0.0042) * w * 0.335 * 0.10;
+      for (var i = 0; i < 3; i++) {
+        final side = i == 0 ? -1.0 : (i == 1 ? 1.0 : 0.0);
+        final gx = cen + side * hw * (0.55 + 0.16 * ((y ~/ 46) % 3));
+        canvas.drawOval(
+          Rect.fromCenter(
+            center: Offset(gx, y + ((y.toInt() + i * 7) % 11)),
+            width: 12,
+            height: 5,
+          ),
+          Paint()..color = const Color(0xFF95D378).withValues(alpha: 0.55),
+        );
+      }
+    }
+
     _paintTrail(canvas);
+    _paintLighthouse(canvas, cx + w * 0.23, 128);
     _paintDecos(canvas);
 
+    canvas.restore();
+  }
+
+  /// 山顶的灯塔（白塔身 + 橘色圆顶 + 暖黄灯光）
+  void _paintLighthouse(Canvas canvas, double x, double baseY) {
+    canvas.save();
+    canvas.translate(x, baseY);
+    canvas.scale(1.35);
+    canvas.translate(-x, -baseY);
+
+    const towerH = 106.0;
+    const bottomW = 42.0;
+    const topW = 27.0;
+    final topY = baseY - towerH;
+
+    // 底座岩石
+    canvas.drawOval(
+      Rect.fromCenter(center: Offset(x, baseY + 5), width: 80, height: 24),
+      Paint()..color = const Color(0xFFB7C1CA),
+    );
+    canvas.drawOval(
+      Rect.fromCenter(center: Offset(x - 4, baseY + 2), width: 66, height: 17),
+      Paint()..color = const Color(0xFFD4DCE3),
+    );
+
+    // 塔身
+    final tower = Path()
+      ..moveTo(x - bottomW / 2, baseY)
+      ..lineTo(x - topW / 2, topY + 14)
+      ..lineTo(x + topW / 2, topY + 14)
+      ..lineTo(x + bottomW / 2, baseY)
+      ..close();
+    canvas.drawPath(
+      tower,
+      Paint()
+        ..shader = const LinearGradient(
+          begin: Alignment.centerLeft,
+          end: Alignment.centerRight,
+          colors: [Color(0xFFF5F2EC), Color(0xFFFFFFFF), Color(0xFFDAD5CB)],
+          stops: [0.0, 0.42, 1.0],
+        ).createShader(tower.getBounds()),
+    );
+
+    // 两圈橘色条纹
+    for (final ty in const [0.34, 0.70]) {
+      final y = baseY - towerH * ty;
+      final ww = bottomW - (bottomW - topW) * ty;
+      canvas.drawRect(
+        Rect.fromCenter(center: Offset(x, y), width: ww - 1, height: 8),
+        Paint()..color = const Color(0xFFFF8A5B),
+      );
+    }
+
+    // 观景台
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+        Rect.fromCenter(center: Offset(x, topY + 13), width: topW + 20, height: 8),
+        const Radius.circular(3),
+      ),
+      Paint()..color = const Color(0xFF9AA5B1),
+    );
+
+    // 灯室
+    final lampRect = Rect.fromCenter(
+      center: Offset(x, topY + 3),
+      width: topW + 2,
+      height: 17,
+    );
+    canvas.drawCircle(
+      Offset(x, topY + 3),
+      36,
+      Paint()
+        ..shader = RadialGradient(
+          colors: [
+            const Color(0xFFFFF1BC).withValues(alpha: 0.8),
+            const Color(0xFFFFF1BC).withValues(alpha: 0.0),
+          ],
+        ).createShader(Rect.fromCircle(center: Offset(x, topY + 3), radius: 36)),
+    );
+    canvas.drawRect(lampRect, Paint()..color = const Color(0xFFFFE79A));
+    canvas.drawRect(
+      lampRect,
+      Paint()
+        ..color = const Color(0xFF8A929B)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 2,
+    );
+
+    // 橘色圆顶 + 尖顶
+    final roof = Path()
+      ..moveTo(x - topW / 2 - 4, topY - 5)
+      ..quadraticBezierTo(x, topY - 27, x + topW / 2 + 4, topY - 5)
+      ..close();
+    canvas.drawPath(roof, Paint()..color = const Color(0xFFF2843F));
+    canvas.drawCircle(
+      Offset(x, topY - 24),
+      3.6,
+      Paint()..color = const Color(0xFFF2843F),
+    );
     canvas.restore();
   }
 
@@ -1085,7 +1229,7 @@ class _WorldPainter extends CustomPainter {
     final left = <Offset>[];
     final right = <Offset>[];
     for (var y = top; y <= bottom + step; y += step) {
-      final wob = sin(y * 0.0075) * 0.05 + cos(y * 0.0031) * 0.035;
+      final wob = sin(y * 0.0068) * 0.085 + cos(y * 0.0029) * 0.055;
       final hw = halfW * (1 + wob);
       final cen = w / 2 + sin(y * 0.0042) * halfW * 0.10;
       left.add(Offset(cen - hw, y));
@@ -1117,11 +1261,11 @@ class _WorldPainter extends CustomPainter {
         ..strokeWidth = 42
         ..strokeCap = StrokeCap.round
         ..strokeJoin = StrokeJoin.round
-        ..color = const Color(0xFFB08B58),
+        ..color = const Color(0xFFB3AC9C),
     );
     canvas.restore();
 
-    // 路面
+    // 路面：浅色的石板路
     canvas.drawPath(
       path,
       Paint()
@@ -1132,7 +1276,7 @@ class _WorldPainter extends CustomPainter {
         ..shader = const LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
-          colors: [Color(0xFFFDF2D8), Color(0xFFEFDDB4)],
+          colors: [Color(0xFFFBF7EC), Color(0xFFDFD8C7)],
         ).createShader(const Rect.fromLTWH(0, 0, 400, 400)),
     );
 
@@ -1182,48 +1326,113 @@ class _WorldPainter extends CustomPainter {
         Paint()..color = Colors.black.withValues(alpha: 0.16),
       );
       switch (d.kind) {
-        case 0: // 树
-          canvas.drawRect(
-            Rect.fromLTWH(d.x - s * 0.09, d.y - s * 1.05, s * 0.18, s * 1.05),
-            Paint()..color = const Color(0xFF8B5A2B),
+        case 0: // 椰子树：弯树干 + 一圈叶子 + 两个椰子
+          final top = Offset(d.x + s * 0.26, d.y - s * 2.0);
+          final trunkPath = Path()
+            ..moveTo(d.x - s * 0.12, d.y)
+            ..quadraticBezierTo(d.x + s * 0.14, d.y - s * 1.05, top.dx, top.dy);
+          canvas.drawPath(
+            trunkPath,
+            Paint()
+              ..style = PaintingStyle.stroke
+              ..strokeWidth = s * 0.26
+              ..strokeCap = StrokeCap.round
+              ..shader = const LinearGradient(
+                begin: Alignment.centerLeft,
+                end: Alignment.centerRight,
+                colors: [Color(0xFFC08A54), Color(0xFF8A5A2E)],
+              ).createShader(Rect.fromLTWH(
+                  d.x - s * 0.3, d.y - s * 2.2, s * 0.9, s * 2.2)),
           );
-          for (var i = 0; i < 3; i++) {
-            final r = s * (0.62 - i * 0.13);
-            final yy = d.y - s * (0.75 + i * 0.42);
-            canvas.drawCircle(
-              Offset(d.x - r * 0.28, yy),
-              r,
-              Paint()..color = Color.lerp(
-                  const Color(0xFF2E8B57), const Color(0xFF7FD48F), i / 3)!,
+          for (var i = 1; i <= 3; i++) {
+            final tt = i / 4;
+            final px = (1 - tt) * (1 - tt) * (d.x - s * 0.12) +
+                2 * (1 - tt) * tt * (d.x + s * 0.14) +
+                tt * tt * top.dx;
+            final py = (1 - tt) * (1 - tt) * d.y +
+                2 * (1 - tt) * tt * (d.y - s * 1.05) +
+                tt * tt * top.dy;
+            canvas.drawLine(
+              Offset(px - s * 0.12, py),
+              Offset(px + s * 0.11, py + s * 0.02),
+              Paint()
+                ..color = const Color(0xFF7A4E28).withValues(alpha: 0.45)
+                ..strokeWidth = s * 0.06
+                ..strokeCap = StrokeCap.round,
             );
+          }
+          for (final o in const [Offset(-0.14, 0.06), Offset(0.14, 0.10)]) {
             canvas.drawCircle(
-              Offset(d.x + r * 0.3, yy + r * 0.12),
-              r * 0.86,
-              Paint()..color = Color.lerp(
-                  const Color(0xFF3AA366), const Color(0xFF95E0A2), i / 3)!,
+              Offset(top.dx + s * o.dx, top.dy + s * o.dy),
+              s * 0.13,
+              Paint()..color = const Color(0xFF9A6A3A),
+            );
+          }
+          for (var i = 0; i < 6; i++) {
+            final ang = -pi / 2 + (i - 2.5) * 0.58;
+            final len = s * (1.75 - (i - 2.5).abs() * 0.16);
+            final tip = Offset(
+                top.dx + cos(ang) * len, top.dy + sin(ang) * len * 0.70);
+            final ctrl = Offset(
+              top.dx + cos(ang) * len * 0.55,
+              top.dy + sin(ang) * len * 0.5 - s * 0.22,
+            );
+            final leaf = Path()
+              ..moveTo(top.dx, top.dy)
+              ..quadraticBezierTo(ctrl.dx, ctrl.dy, tip.dx, tip.dy)
+              ..quadraticBezierTo(
+                  ctrl.dx - cos(ang) * s * 0.10,
+                  ctrl.dy + s * 0.52,
+                  top.dx,
+                  top.dy)
+              ..close();
+            canvas.drawPath(
+              leaf,
+              Paint()
+                ..color =
+                    i.isEven ? const Color(0xFF5FBA57) : const Color(0xFF86DA73),
             );
           }
           break;
-        case 1: // 小房子
+        case 1: // 小房子（圆顶小屋，参考图里的那种）
           final bw = s * 1.25;
           final bh = s * 1.0;
-          canvas.drawRect(
-            Rect.fromLTWH(d.x - bw / 2, d.y - bh, bw, bh),
-            Paint()..color = const Color(0xFFFDF3E0),
-          );
-          canvas.drawRect(
-            Rect.fromLTWH(d.x - bw / 2, d.y - bh * 0.55, bw, bh * 0.55),
-            Paint()..color = const Color(0xFFF3E2C4),
+          final wall = Rect.fromLTRB(d.x - bw / 2, d.y - bh, d.x + bw / 2, d.y);
+          canvas.drawRRect(
+            RRect.fromRectAndRadius(wall, Radius.circular(s * 0.16)),
+            Paint()
+              ..shader = const LinearGradient(
+                begin: Alignment.centerLeft,
+                end: Alignment.centerRight,
+                colors: [Color(0xFFFFFFFF), Color(0xFFF0E4D0)],
+              ).createShader(wall),
           );
           final roof = Path()
-            ..moveTo(d.x - bw * 0.62, d.y - bh)
-            ..lineTo(d.x, d.y - bh * 1.6)
-            ..lineTo(d.x + bw * 0.62, d.y - bh)
+            ..moveTo(d.x - bw * 0.64, d.y - bh * 0.96)
+            ..quadraticBezierTo(d.x, d.y - bh * 1.95, d.x + bw * 0.64, d.y - bh * 0.96)
             ..close();
-          canvas.drawPath(roof, Paint()..color = const Color(0xFFE07A5F));
-          canvas.drawRect(
-            Rect.fromLTWH(d.x - bw * 0.16, d.y - bh * 0.5, bw * 0.32, bh * 0.5),
+          canvas.drawPath(
+            roof,
+            Paint()
+              ..shader = const LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [Color(0xFFFFA96B), Color(0xFFE07A45)],
+              ).createShader(Rect.fromLTRB(
+                  d.x - bw * 0.7, d.y - bh * 2, d.x + bw * 0.7, d.y - bh * 0.9)),
+          );
+          canvas.drawRRect(
+            RRect.fromRectAndRadius(
+              Rect.fromLTWH(d.x - bw * 0.16, d.y - bh * 0.52, bw * 0.32,
+                  bh * 0.52),
+              Radius.circular(s * 0.08),
+            ),
             Paint()..color = const Color(0xFFB5835A),
+          );
+          canvas.drawCircle(
+            Offset(d.x + bw * 0.28, d.y - bh * 0.66),
+            s * 0.10,
+            Paint()..color = const Color(0xFFFFE79A),
           );
           break;
         case 2: // 灌木
@@ -1239,8 +1448,48 @@ class _WorldPainter extends CustomPainter {
                 center: Offset(d.x - s * 0.22, d.y - s * 0.42),
                 width: s * 0.7,
                 height: s * 0.44),
-            Paint()..color = const Color(0xFF84CE8B),
+            Paint()..color = const Color(0xFF8ADB77),
           );
+          break;
+        case 4: // 珊瑚（沙滩边上的粉色珊瑚）
+          for (final o in const [
+            Offset(-0.30, 0.62),
+            Offset(0.02, 0.80),
+            Offset(0.30, 0.56),
+          ]) {
+            canvas.drawOval(
+              Rect.fromCenter(
+                center: Offset(d.x + s * o.dx, d.y - s * o.dy * 0.55),
+                width: s * 0.22,
+                height: s * o.dy,
+              ),
+              Paint()..color = const Color(0xFFF79AB2),
+            );
+          }
+          canvas.drawOval(
+            Rect.fromCenter(
+                center: Offset(d.x, d.y - s * 0.06),
+                width: s * 0.86,
+                height: s * 0.22),
+            Paint()..color = const Color(0xFFFFC2D1),
+          );
+          break;
+        case 5: // 贝壳
+          final shell = Rect.fromCenter(
+            center: Offset(d.x, d.y - s * 0.14),
+            width: s * 0.66,
+            height: s * 0.46,
+          );
+          canvas.drawOval(shell, Paint()..color = const Color(0xFFFFF2E2));
+          for (var i = -1; i <= 1; i++) {
+            canvas.drawLine(
+              Offset(d.x + i * s * 0.15, d.y - s * 0.34),
+              Offset(d.x + i * s * 0.20, d.y + s * 0.02),
+              Paint()
+                ..color = const Color(0xFFE7CBB4)
+                ..strokeWidth = 1.6,
+            );
+          }
           break;
         default: // 石头
           final p = Path()
@@ -1249,14 +1498,23 @@ class _WorldPainter extends CustomPainter {
             ..lineTo(d.x + s * 0.18, d.y - s * 0.58)
             ..lineTo(d.x + s * 0.5, d.y - s * 0.12)
             ..close();
-          canvas.drawPath(p, Paint()..color = const Color(0xFFB9BEC6));
+          canvas.drawPath(
+            p,
+            Paint()
+              ..shader = const LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [Color(0xFFD7DBE1), Color(0xFFA8AFB9)],
+              ).createShader(Rect.fromLTRB(
+                  d.x - s * 0.5, d.y - s * 0.6, d.x + s * 0.5, d.y)),
+          );
           canvas.drawPath(
             Path()
               ..moveTo(d.x - s * 0.32, d.y - s * 0.5)
               ..lineTo(d.x + s * 0.18, d.y - s * 0.58)
               ..lineTo(d.x + s * 0.06, d.y - s * 0.26)
               ..close(),
-            Paint()..color = const Color(0xFFD7DBE1),
+            Paint()..color = const Color(0xFFEDF1F5),
           );
           break;
       }
@@ -1313,40 +1571,80 @@ class _BackdropState extends State<_Backdrop>
 class _SeaPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
-    final rect = Rect.fromLTWH(0, 0, size.width, size.height);
+    final w = size.width;
+    final h = size.height;
+    final horizon = h * 0.42;
+
+    // 天：上面浅蓝，靠近海面泛白（参考图那种粉蓝色）
+    final skyRect = Rect.fromLTWH(0, 0, w, horizon + 4);
     canvas.drawRect(
-      rect,
+      skyRect,
       Paint()
         ..shader = const LinearGradient(
           begin: Alignment.topCenter,
           end: Alignment.bottomCenter,
-          colors: [Color(0xFF9FDCF7), Color(0xFF6FC2E8), Color(0xFF4AA9D8)],
-        ).createShader(rect),
+          colors: [Color(0xFF9EDCF2), Color(0xFFC6EEF9), Color(0xFFE8FAF2)],
+          stops: [0.0, 0.60, 1.0],
+        ).createShader(skyRect),
     );
-    // 太阳
+
+    // 左上角的太阳光晕
+    final sun = Offset(w * 0.15, h * 0.05);
+    final glow = Rect.fromCircle(center: sun, radius: w * 0.42);
     canvas.drawCircle(
-      Offset(size.width * 0.86, size.height * 0.09),
-      26,
-      Paint()..color = const Color(0xFFFFD375).withValues(alpha: 0.85),
+      sun,
+      w * 0.42,
+      Paint()
+        ..shader = RadialGradient(
+          colors: [
+            const Color(0xFFFFF8DC).withValues(alpha: 0.95),
+            const Color(0xFFFFF8DC).withValues(alpha: 0.0),
+          ],
+        ).createShader(glow),
     );
     canvas.drawCircle(
-      Offset(size.width * 0.86, size.height * 0.09),
-      40,
-      Paint()..color = const Color(0xFFFFE3A3).withValues(alpha: 0.35),
+      sun,
+      w * 0.055,
+      Paint()..color = const Color(0xFFFFFBE8).withValues(alpha: 0.95),
     );
-    // 海面波纹
-    final wave = Paint()
-      ..color = Colors.white.withValues(alpha: 0.20)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 2.5;
-    for (var i = 0; i < 9; i++) {
-      final y = size.height * (0.18 + i * 0.095);
-      final p = Path()..moveTo(-20, y);
-      for (var x = -20.0; x < size.width + 40; x += 40) {
-        p.quadraticBezierTo(x + 10, y - 5, x + 20, y);
-        p.quadraticBezierTo(x + 30, y + 5, x + 40, y);
-      }
-      canvas.drawPath(p, wave);
+
+    // 海：青绿 → 蓝绿
+    final seaRect = Rect.fromLTWH(0, horizon, w, h - horizon);
+    canvas.drawRect(
+      seaRect,
+      Paint()
+        ..shader = const LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [Color(0xFF9CE8E4), Color(0xFF6FD3DA), Color(0xFF46B6C8)],
+          stops: [0.0, 0.45, 1.0],
+        ).createShader(seaRect),
+    );
+
+    // 地平线上的一道亮边
+    canvas.drawRect(
+      Rect.fromLTWH(0, horizon - 3, w, 5),
+      Paint()..color = Colors.white.withValues(alpha: 0.55),
+    );
+
+    // 海面亮带 + 波光
+    for (var i = 0; i < 7; i++) {
+      final y = horizon + (h - horizon) * (0.08 + i * 0.135);
+      final bw = w * (0.30 + (i % 3) * 0.16);
+      final rect = Rect.fromLTWH(w * (0.08 + (i % 4) * 0.17), y, bw, 5.0 + (i % 2) * 3);
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(rect, const Radius.circular(6)),
+        Paint()..color = Colors.white.withValues(alpha: 0.15),
+      );
+    }
+    for (var i = 0; i < 30; i++) {
+      final x = ((i * 37) % 100) / 100 * w;
+      final y = horizon + (((i * 61) % 100) / 100) * (h - horizon);
+      canvas.drawCircle(
+        Offset(x, y),
+        1.7,
+        Paint()..color = Colors.white.withValues(alpha: 0.32),
+      );
     }
   }
 
@@ -1361,32 +1659,45 @@ class _SkyLife extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    // 云
-    final cloudPaint = Paint()..color = Colors.white.withValues(alpha: 0.85);
-    for (var i = 0; i < 3; i++) {
-      final phase = (t + i * 0.33) % 1.0;
-      final x = -80 + phase * (size.width + 160);
-      final y = size.height * (0.08 + i * 0.16);
-      final s = 0.8 + i * 0.25;
-      for (final o in const [
-        Offset(0, 0),
-        Offset(26, -8),
-        Offset(-26, 4),
-        Offset(10, 8),
-      ]) {
+    // 云：黏土质感的蓬蓬云，底下带一点淡蓝的暗面
+    for (var i = 0; i < 4; i++) {
+      final phase = (t + i * 0.27) % 1.0;
+      final x = -110 + phase * (size.width + 220);
+      final y = size.height * (0.05 + i * 0.11);
+      final s = 0.75 + i * 0.22;
+      final lobes = const [
+        Offset(0, 2),
+        Offset(30, -6),
+        Offset(-30, 4),
+        Offset(12, 12),
+        Offset(-14, 11),
+        Offset(46, 6),
+      ];
+      // 暗面先画，整体往下挪一点
+      for (final o in lobes) {
+        canvas.drawOval(
+          Rect.fromCenter(
+            center: Offset(x + o.dx * s, y + o.dy * s + 6 * s),
+            width: 58 * s,
+            height: 34 * s,
+          ),
+          Paint()..color = const Color(0xFFCDE8F2).withValues(alpha: 0.55),
+        );
+      }
+      for (final o in lobes) {
         canvas.drawOval(
           Rect.fromCenter(
             center: Offset(x + o.dx * s, y + o.dy * s),
-            width: 52 * s,
-            height: 30 * s,
+            width: 58 * s,
+            height: 34 * s,
           ),
-          cloudPaint,
+          Paint()..color = Colors.white.withValues(alpha: 0.94),
         );
       }
     }
     // 飞鸟（扇翅膀）
     final birdPaint = Paint()
-      ..color = const Color(0xFF4B6B7A).withValues(alpha: 0.75)
+      ..color = const Color(0xFF4B6B7A).withValues(alpha: 0.6)
       ..style = PaintingStyle.stroke
       ..strokeWidth = 2.2
       ..strokeCap = StrokeCap.round;

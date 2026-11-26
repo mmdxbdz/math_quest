@@ -203,6 +203,10 @@ class PetSpecies {
   final Color patch;
   final int earStyle; // 0 圆耳 1 尖耳 2 长耳 3 猪耳
 
+  /// 脖子上的小配饰：scarf 围巾 / bow 蝴蝶结 / harness 胸背带 / none
+  final String accessory;
+  final Color accColor;
+
   const PetSpecies({
     required this.id,
     required this.title,
@@ -213,6 +217,8 @@ class PetSpecies {
     required this.patch,
     this.food = '🐟',
     this.earStyle = 0,
+    this.accessory = 'none',
+    this.accColor = const Color(0xFFFF8FB0),
   });
 }
 
@@ -227,17 +233,21 @@ const List<PetSpecies> kPetSpecies = [
     ear: Color(0xFFF3A85F),
     patch: Color(0xFFFFA1A1),
     earStyle: 1,
+    accessory: 'bow',
+    accColor: Color(0xFFFF7FA8),
   ),
   PetSpecies(
     id: 'dog',
     title: '小狗',
     defaultName: '豆豆',
     food: '🍖',
-    body: Color(0xFFE8C79B),
-    belly: Color(0xFFF8EEDC),
-    ear: Color(0xFFC99B63),
+    body: Color(0xFFF0D3A8),
+    belly: Color(0xFFFDF4E3),
+    ear: Color(0xFFD2A46B),
     patch: Color(0xFFFFA1A1),
     earStyle: 0,
+    accessory: 'harness',
+    accColor: Color(0xFF5FCB6C),
   ),
   PetSpecies(
     id: 'rabbit',
@@ -249,6 +259,8 @@ const List<PetSpecies> kPetSpecies = [
     ear: Color(0xFFF6C9D6),
     patch: Color(0xFFFF9DB4),
     earStyle: 2,
+    accessory: 'bow',
+    accColor: Color(0xFFFF9EC4),
   ),
   PetSpecies(
     id: 'bear',
@@ -260,6 +272,8 @@ const List<PetSpecies> kPetSpecies = [
     ear: Color(0xFFA97A56),
     patch: Color(0xFFF0A0A0),
     earStyle: 0,
+    accessory: 'scarf',
+    accColor: Color(0xFFF6A94A),
   ),
   PetSpecies(
     id: 'panda',
@@ -271,6 +285,8 @@ const List<PetSpecies> kPetSpecies = [
     ear: Color(0xFF3B3B3B),
     patch: Color(0xFF3B3B3B),
     earStyle: 0,
+    accessory: 'scarf',
+    accColor: Color(0xFFE8615A),
   ),
   PetSpecies(
     id: 'fox',
@@ -282,6 +298,8 @@ const List<PetSpecies> kPetSpecies = [
     ear: Color(0xFFF08A3C),
     patch: Color(0xFFFF9C9C),
     earStyle: 1,
+    accessory: 'scarf',
+    accColor: Color(0xFF7FC4E8),
   ),
   PetSpecies(
     id: 'pig',
@@ -293,6 +311,8 @@ const List<PetSpecies> kPetSpecies = [
     ear: Color(0xFFF5A0B6),
     patch: Color(0xFFFF8FA8),
     earStyle: 3,
+    accessory: 'bow',
+    accColor: Color(0xFFFF8FB0),
   ),
   PetSpecies(
     id: 'polar',
@@ -304,6 +324,8 @@ const List<PetSpecies> kPetSpecies = [
     ear: Color(0xFFD3E8F7),
     patch: Color(0xFFFFA8BC),
     earStyle: 0,
+    accessory: 'scarf',
+    accColor: Color(0xFF8FD0F0),
   ),
   PetSpecies(
     id: 'frog',
@@ -315,6 +337,8 @@ const List<PetSpecies> kPetSpecies = [
     ear: Color(0xFF7FC463),
     patch: Color(0xFFFFA1A1),
     earStyle: 0,
+    accessory: 'bow',
+    accColor: Color(0xFFFFD166),
   ),
 ];
 
@@ -510,14 +534,23 @@ class _PetPainter extends CustomPainter {
     // 低头：整个身子往下压
     final cy = baseCy + dip * r * 0.75;
 
-    // 地面影子
+    // 地面影子（软一点，像黏土摆在桌上）
+    final shadowRect = Rect.fromCenter(
+      center: Offset(cx, cy + r * 1.10),
+      width: r * 2.5 * wf,
+      height: r * 0.68,
+    );
     canvas.drawOval(
-      Rect.fromCenter(
-        center: Offset(cx, cy + r * 1.12),
-        width: r * 2.3 * wf,
-        height: r * 0.6,
-      ),
-      Paint()..color = Colors.black.withValues(alpha: 0.13),
+      shadowRect,
+      Paint()
+        ..shader = RadialGradient(
+          colors: [
+            Colors.black.withValues(alpha: 0.20),
+            Colors.black.withValues(alpha: 0.05),
+            Colors.black.withValues(alpha: 0),
+          ],
+          stops: const [0.0, 0.55, 1.0],
+        ).createShader(shadowRect),
     );
 
     // 耳朵（画在身体后面）
@@ -565,23 +598,83 @@ class _PetPainter extends CustomPainter {
         }
     }
 
-    // 身体
+    // 身体：黏土质感 = 左上打光 + 底部暗面 + 一圈高光
     final bodyRect = Rect.fromCenter(
       center: Offset(cx, cy),
       width: r * 2.2 * wf,
       height: r * 2.0,
     );
-    canvas.drawOval(bodyRect, Paint()..color = species.body);
-
-    // 肚皮
+    canvas.drawOval(
+      bodyRect,
+      Paint()
+        ..shader = RadialGradient(
+          center: const Alignment(-0.45, -0.55),
+          radius: 1.15,
+          colors: [
+            Color.lerp(species.body, Colors.white, 0.45)!,
+            species.body,
+            Color.lerp(species.body, const Color(0xFF6B4A33), 0.22)!,
+          ],
+          stops: const [0.0, 0.62, 1.0],
+        ).createShader(bodyRect),
+    );
+    // 左上一点柔光，黏土的反光
+    canvas.save();
+    canvas.clipPath(Path()..addOval(bodyRect));
     canvas.drawOval(
       Rect.fromCenter(
-        center: Offset(cx, cy + r * 0.38),
-        width: r * 1.25 * wf,
-        height: r * 1.1,
+        center: Offset(cx - r * 0.62, cy - r * 0.66),
+        width: r * 1.05,
+        height: r * 0.72,
       ),
-      Paint()..color = species.belly,
+      Paint()
+        ..shader = RadialGradient(
+          colors: [
+            Colors.white.withValues(alpha: 0.55),
+            Colors.white.withValues(alpha: 0),
+          ],
+        ).createShader(Rect.fromCenter(
+          center: Offset(cx - r * 0.62, cy - r * 0.66),
+          width: r * 1.05,
+          height: r * 0.72,
+        )),
     );
+    canvas.restore();
+
+    // 肚皮（软软的一大块，边上晕开）
+    final bellyRect = Rect.fromCenter(
+      center: Offset(cx, cy + r * 0.40),
+      width: r * 1.30 * wf,
+      height: r * 1.12,
+    );
+    canvas.drawOval(
+      bellyRect,
+      Paint()
+        ..shader = RadialGradient(
+          center: const Alignment(0, -0.2),
+          radius: 1.0,
+          colors: [
+            species.belly,
+            Color.lerp(species.belly, species.body, 0.55)!,
+          ],
+          stops: const [0.55, 1.0],
+        ).createShader(bellyRect),
+    );
+
+    // 嘴鼻那一块浅浅的白色（参考图里猫狗熊都有）
+    final muzzleRect = Rect.fromCenter(
+      center: Offset(cx, cy + r * 0.16),
+      width: r * 0.98,
+      height: r * 0.70,
+    );
+    canvas.drawOval(
+      muzzleRect,
+      Paint()..color = Color.lerp(species.belly, Colors.white, 0.55)!
+          .withValues(alpha: species.id == 'panda' ? 0.0 : 0.92),
+    );
+
+    // 脖子上的小配饰
+    _paintAccessory(canvas, cx, cy, r, wf);
 
     // 熊猫黑眼圈
     if (species.id == 'panda') {
@@ -597,8 +690,34 @@ class _PetPainter extends CustomPainter {
       }
     }
 
-    // 眼睛
-    final eyePaint = Paint()..color = const Color(0xFF3B3B3B);
+    // 鼻子：圆钝的小鼻头 + 一点高光
+    if (!(eating || drinking)) {
+      final noseRect = Rect.fromCenter(
+        center: Offset(cx, cy + r * 0.02),
+        width: r * 0.30,
+        height: r * 0.22,
+      );
+      canvas.drawOval(
+        noseRect,
+        Paint()
+          ..shader = const LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [Color(0xFF7E5850), Color(0xFF4E332E)],
+          ).createShader(noseRect),
+      );
+      canvas.drawOval(
+        Rect.fromCenter(
+          center: Offset(cx - r * 0.05, cy - r * 0.01),
+          width: r * 0.10,
+          height: r * 0.06,
+        ),
+        Paint()..color = Colors.white.withValues(alpha: 0.7),
+      );
+    }
+
+    // 眼睛：大眼白 + 深色眼珠 + 两点高光（黏土玩偶那种亮亮的眼睛）
+    const eyeDark = Color(0xFF3A2C28);
     if (sleeping) {
       for (final dir in [-1.0, 1.0]) {
         final p = Path()
@@ -608,7 +727,7 @@ class _PetPainter extends CustomPainter {
         canvas.drawPath(
           p,
           Paint()
-            ..color = const Color(0xFF3B3B3B)
+            ..color = eyeDark
             ..style = PaintingStyle.stroke
             ..strokeWidth = r * 0.09
             ..strokeCap = StrokeCap.round,
@@ -617,30 +736,55 @@ class _PetPainter extends CustomPainter {
     } else if (blink) {
       for (final dir in [-1.0, 1.0]) {
         canvas.drawLine(
-          Offset(cx + dir * r * 0.42 - r * 0.13, cy - r * 0.32),
-          Offset(cx + dir * r * 0.42 + r * 0.13, cy - r * 0.32),
+          Offset(cx + dir * r * 0.42 - r * 0.15, cy - r * 0.32),
+          Offset(cx + dir * r * 0.42 + r * 0.15, cy - r * 0.32),
           Paint()
-            ..color = const Color(0xFF3B3B3B)
+            ..color = eyeDark
             ..strokeWidth = r * 0.09
             ..strokeCap = StrokeCap.round,
         );
       }
     } else {
       for (final dir in [-1.0, 1.0]) {
-        final eyeCenter = Offset(cx + dir * r * 0.42, cy - r * 0.32);
-        canvas.drawCircle(eyeCenter, r * 0.15, eyePaint);
+        final eyeCenter = Offset(cx + dir * r * 0.42, cy - r * 0.36);
+        final ew = r * 0.36;
+        final white = Rect.fromCenter(
+          center: eyeCenter,
+          width: ew,
+          height: ew * 1.16,
+        );
+        canvas.drawOval(white, Paint()..color = Colors.white);
+        final iris = Rect.fromCenter(
+          center: eyeCenter + Offset(0, r * 0.015),
+          width: ew * 0.78,
+          height: ew * 0.90,
+        );
+        canvas.drawOval(
+          iris,
+          Paint()
+            ..shader = const RadialGradient(
+              center: Alignment(0, 0.55),
+              colors: [Color(0xFF6E4B3E), eyeDark],
+              stops: [0.0, 0.75],
+            ).createShader(iris),
+        );
         canvas.drawCircle(
-          eyeCenter + Offset(-r * 0.05, -r * 0.05),
-          r * 0.055,
+          eyeCenter + Offset(-ew * 0.18, -ew * 0.24),
+          ew * 0.19,
           Paint()..color = Colors.white,
+        );
+        canvas.drawCircle(
+          eyeCenter + Offset(ew * 0.16, ew * 0.20),
+          ew * 0.09,
+          Paint()..color = Colors.white.withValues(alpha: 0.85),
         );
       }
     }
 
     if (eating || drinking) {
       // 张大嘴（吃饭/喝水）：黑黑的嘴巴 + 里面一点舌头
-      final openW = r * (drinking ? 0.30 : 0.44);
-      final openH = r * (drinking ? 0.26 : 0.40);
+      final openW = r * (drinking ? 0.34 : 0.54);
+      final openH = r * (drinking ? 0.30 : 0.48);
       final mouthRect = Rect.fromCenter(
         center: Offset(cx, cy + r * 0.20),
         width: openW,
@@ -682,20 +826,45 @@ class _PetPainter extends CustomPainter {
       );
     }
 
-    // 四个小爪：走路时一前一后抬起来
-    final pawPaint = Paint()..color = species.ear.withValues(alpha: 0.85);
+    // 四个小爪：走路时一前一后抬起来，肉垫是浅色的
     final pawY = baseCy + r * 0.95; // 小爪始终踩在地上
     for (var i = 0; i < 2; i++) {
       final dir = i == 0 ? -1.0 : 1.0;
       final lift = _paw(i) * r * 0.16;
+      final pawRect = Rect.fromCenter(
+        center: Offset(cx + dir * r * 0.62 * wf, pawY + lift),
+        width: r * 0.52,
+        height: r * 0.36,
+      );
+      canvas.drawOval(
+        pawRect,
+        Paint()
+          ..shader = RadialGradient(
+            center: const Alignment(-0.3, -0.4),
+            radius: 1.1,
+            colors: [
+              Color.lerp(species.ear, Colors.white, 0.35)!,
+              species.ear,
+            ],
+          ).createShader(pawRect),
+      );
+      // 肉垫：一大两小
+      final padColor = species.patch.withValues(alpha: 0.55);
       canvas.drawOval(
         Rect.fromCenter(
-          center: Offset(cx + dir * r * 0.62 * wf, pawY + lift),
-          width: r * 0.52,
-          height: r * 0.34,
+          center: Offset(0, 1) + Offset(cx + dir * r * 0.62 * wf, pawY + lift),
+          width: r * 0.17,
+          height: r * 0.13,
         ),
-        pawPaint,
+        Paint()..color = padColor,
       );
+      for (final ox in [-0.13, 0.0, 0.13]) {
+        canvas.drawCircle(
+          Offset(cx + dir * r * 0.62 * wf + r * ox, pawY + lift - r * 0.10),
+          r * 0.035,
+          Paint()..color = padColor,
+        );
+      }
     }
 
     // 边线让轮廓更清楚
@@ -706,6 +875,121 @@ class _PetPainter extends CustomPainter {
         ..style = PaintingStyle.stroke
         ..strokeWidth = r * 0.06,
     );
+  }
+
+  /// 脖子上的小配饰（参考图里的围巾 / 蝴蝶结 / 胸背带）
+  void _paintAccessory(Canvas canvas, double cx, double cy, double r, double wf) {
+    final acc = species.accessory;
+    if (acc == 'none') return;
+    final base = species.accColor;
+    final dark = Color.lerp(base, const Color(0xFF3A2C28), 0.28)!;
+    final light = Color.lerp(base, Colors.white, 0.35)!;
+    final y = cy + r * 0.52;
+
+    switch (acc) {
+      case 'scarf':
+        // 围在脖子上一圈
+        final band = RRect.fromRectAndRadius(
+          Rect.fromCenter(
+            center: Offset(cx, y),
+            width: r * 1.22 * wf,
+            height: r * 0.24,
+          ),
+          Radius.circular(r * 0.12),
+        );
+        canvas.drawRRect(
+          band,
+          Paint()
+            ..shader = LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [light, base, dark],
+              stops: const [0.0, 0.55, 1.0],
+            ).createShader(band.outerRect),
+        );
+        // 尾巴：往右下飘出去一小截
+        final tail = Path()
+          ..moveTo(cx + r * 0.14, y + r * 0.04)
+          ..lineTo(cx + r * 0.54, y + r * 0.20)
+          ..lineTo(cx + r * 0.44, y + r * 0.42)
+          ..lineTo(cx + r * 0.06, y + r * 0.16)
+          ..close();
+        canvas.drawPath(
+          tail,
+          Paint()
+            ..shader = LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [base, dark],
+            ).createShader(tail.getBounds()),
+        );
+        break;
+      case 'bow':
+        // 蝴蝶结：两侧三角 + 中间结
+        for (final dir in [-1.0, 1.0]) {
+          final wing = Path()
+            ..moveTo(cx, y)
+            ..lineTo(cx + dir * r * 0.30, y - r * 0.17)
+            ..lineTo(cx + dir * r * 0.30, y + r * 0.17)
+            ..close();
+          canvas.drawPath(
+            wing,
+            Paint()
+              ..shader = LinearGradient(
+                begin: dir < 0 ? Alignment.centerRight : Alignment.centerLeft,
+                end: dir < 0 ? Alignment.centerLeft : Alignment.centerRight,
+                colors: [base, light],
+              ).createShader(wing.getBounds()),
+          );
+        }
+        canvas.drawCircle(
+          Offset(cx, y),
+          r * 0.10,
+          Paint()..color = dark,
+        );
+        canvas.drawCircle(
+          Offset(cx - r * 0.03, y - r * 0.04),
+          r * 0.032,
+          Paint()..color = Colors.white.withValues(alpha: 0.8),
+        );
+        break;
+      default: // harness 胸背带：两条带子 + 一个扣
+        final strap = Paint()..color = base;
+        canvas.drawRRect(
+          RRect.fromRectAndRadius(
+            Rect.fromCenter(
+              center: Offset(cx, cy + r * 0.34),
+              width: r * 1.10 * wf,
+              height: r * 0.15,
+            ),
+            Radius.circular(r * 0.08),
+          ),
+          strap,
+        );
+        canvas.drawRRect(
+          RRect.fromRectAndRadius(
+            Rect.fromCenter(
+              center: Offset(cx, cy + r * 0.80),
+              width: r * 0.94 * wf,
+              height: r * 0.14,
+            ),
+            Radius.circular(r * 0.07),
+          ),
+          strap,
+        );
+        // 中间的金属扣
+        canvas.drawCircle(
+          Offset(cx, cy + r * 0.56),
+          r * 0.11,
+          Paint()..color = const Color(0xFFFFE7A8),
+        );
+        canvas.drawCircle(
+          Offset(cx, cy + r * 0.56),
+          r * 0.06,
+          Paint()..color = const Color(0xFFE6B75C),
+        );
+        break;
+    }
   }
 
   @override
