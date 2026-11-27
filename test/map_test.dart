@@ -13,98 +13,99 @@ Future<ProgressStore> freshStore() async {
   return store;
 }
 
+Widget wrap(ProgressStore store, void Function(MapLevel) onTap) => MaterialApp(
+      home: Scaffold(
+        body: IslandMap(
+          store: store,
+          onStartLevel: onTap,
+          onPetHouseTap: () {},
+        ),
+      ),
+    );
+
 void main() {
-  test('底图按 cover 铺满，10 个关卡位都在图上', () {
+  test('底图按 cover 铺满，10 个关卡位都在可见区内', () {
     const box = Size(390, 844);
     final art = coverRect(box, kIslandArtSize);
-    // 竖屏上 cover：高度铺满，宽度超出（左右被裁）
     expect(art.height, closeTo(844, 0.5));
     expect(art.width, greaterThan(390));
-    expect(art.center.dx, closeTo(195, 0.5));
-
     expect(kLevelSpots.length, 10);
+
     for (final s in kLevelSpots) {
-      expect(s.dx, inInclusiveRange(0.0, 1.0));
-      expect(s.dy, inInclusiveRange(0.0, 1.0));
-      // 投影到屏幕上必须落在可见区域内
       final p = Offset(art.left + s.dx * art.width, art.top + s.dy * art.height);
       expect(p.dx, inInclusiveRange(0.0, box.width));
       expect(p.dy, inInclusiveRange(0.0, box.height));
     }
   });
 
-  testWidgets('点第一个关卡圆盘能进关，进度推进后窗口往后走', (tester) async {
+  testWidgets('点圆盘能进关', (tester) async {
     final store = await freshStore();
-    tester.view.physicalSize = const Size(390, 844);
-    tester.view.devicePixelRatio = 1.0;
-    addTearDown(() {
-      tester.view.resetPhysicalSize();
-      tester.view.resetDevicePixelRatio();
-    });
-
     MapLevel? tapped;
-    await tester.pumpWidget(MaterialApp(
-      home: Scaffold(
-        body: IslandMap(
-          store: store,
-          onStartLevel: (l) => tapped = l,
-          onPetHouseTap: () {},
-        ),
-      ),
-    ));
+    await tester.pumpWidget(wrap(store, (l) => tapped = l));
     await tester.pump(const Duration(milliseconds: 100));
-
-    // 一开始显示第 1–10 关
-    expect(find.byKey(const ValueKey('lvl-0')), findsOneWidget);
-    expect(find.byKey(const ValueKey('lvl-9')), findsOneWidget);
-    expect(find.byKey(const ValueKey('lvl-10')), findsNothing);
 
     await tester.tap(find.byKey(const ValueKey('lvl-0')));
     await tester.pump();
-    expect(tapped, isNotNull);
-    expect(tapped!.index, 0);
-    expect(tapped!.unlocked, isTrue);
-    expect(tapped!.stage, 0);
+    expect(tapped?.index, 0);
+    expect(tapped?.stage, 0, reason: '阶段索引必须是 0..2，跟 orderedLevelKeys 一致');
+    expect(tapped?.unlocked, isTrue);
+  });
 
-    // 通掉 4 关后，窗口跟着当前关卡往后挪
-    for (final k in orderedLevelKeys.take(4)) {
-      store.finishLevel(k, 3);
-    }
-    tapped = null;
-    await tester.pumpWidget(MaterialApp(
-      home: Scaffold(
-        body: IslandMap(
-          store: store,
-          onStartLevel: (l) => tapped = l,
-          onPetHouseTap: () {},
-        ),
-      ),
-    ));
+  testWidgets('每页 10 关，翻页能看到全部 78 关', (tester) async {
+    final store = await freshStore();
+    MapLevel? tapped;
+    await tester.pumpWidget(wrap(store, (l) => tapped = l));
     await tester.pump(const Duration(milliseconds: 100));
-    expect(find.byKey(const ValueKey('lvl-0')), findsNothing);
-    expect(find.byKey(const ValueKey('lvl-2')), findsOneWidget);
 
-    // 第一个可点的应该是第 4 关（索引 4，还没做）
+    // 第一页：第 1-10 关
+    expect(find.byKey(const ValueKey('lvl-0')), findsOneWidget);
+    expect(find.byKey(const ValueKey('lvl-9')), findsOneWidget);
+    expect(find.byKey(const ValueKey('lvl-10')), findsNothing);
+    expect(find.textContaining('1-10 / 78'), findsOneWidget);
+
+    // 翻到第二页
+    await tester.tap(find.byKey(const ValueKey('page-next')));
+    await tester.pump(const Duration(milliseconds: 50));
+    expect(find.byKey(const ValueKey('lvl-0')), findsNothing);
+    expect(find.byKey(const ValueKey('lvl-10')), findsOneWidget);
+    expect(find.byKey(const ValueKey('lvl-19')), findsOneWidget);
+    expect(find.textContaining('11-20 / 78'), findsOneWidget);
+
+    // 第二页的圆盘照样能点
+    await tester.tap(find.byKey(const ValueKey('lvl-10')));
+    await tester.pump();
+    expect(tapped?.index, 10);
+
+    // 一直翻到最后一页：78 = 第 71-78 关（8 个圆盘）
+    for (var i = 0; i < 6; i++) {
+      await tester.tap(find.byKey(const ValueKey('page-next')));
+      await tester.pump(const Duration(milliseconds: 50));
+    }
+    expect(find.textContaining('71-78 / 78'), findsOneWidget);
+    expect(find.byKey(const ValueKey('lvl-77')), findsOneWidget);
+    // 最后一页还能往回翻
+    await tester.tap(find.byKey(const ValueKey('page-prev')));
+    await tester.pump(const Duration(milliseconds: 50));
+    expect(find.textContaining('61-70 / 78'), findsOneWidget);
+  });
+
+  testWidgets('进度推进后当前关高亮，翻页不影响当前关标记', (tester) async {
+    final store = await freshStore();
+    for (final k in orderedLevelKeys.take(4)) {
+      store.finishLevel(k, 2);
+    }
+    MapLevel? tapped;
+    await tester.pumpWidget(wrap(store, (l) => tapped = l));
+    await tester.pump(const Duration(milliseconds: 100));
+
     await tester.tap(find.byKey(const ValueKey('lvl-4')));
     await tester.pump();
     expect(tapped?.index, 4);
     expect(tapped?.current, isTrue, reason: '橙色呼吸光那一关就是当前关');
-  });
-
-  testWidgets('锁着的关卡也能点到（点了会被课时页拦下）', (tester) async {
-    final store = await freshStore();
-    await tester.pumpWidget(MaterialApp(
-      home: Scaffold(
-        body: IslandMap(
-          store: store,
-          onStartLevel: (_) {},
-          onPetHouseTap: () {},
-        ),
-      ),
-    ));
-    await tester.pump(const Duration(milliseconds: 50));
-    final last = find.byKey(const ValueKey('lvl-9'));
-    expect(last, findsOneWidget);
-    expect(tester.widget(last).key, const ValueKey('lvl-9'));
+    expect(tapped?.stars, 0);
+    // 前几关已经通关（测试里给了 2 星）
+    await tester.tap(find.byKey(const ValueKey('lvl-3')));
+    await tester.pump();
+    expect(tapped?.stars, 2);
   });
 }

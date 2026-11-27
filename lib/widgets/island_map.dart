@@ -101,6 +101,14 @@ class IslandMap extends StatefulWidget {
 
 class _IslandMapState extends State<IslandMap>
     with SingleTickerProviderStateMixin {
+  /// 当前翻到第几页（每页 10 关），-1 = 还没定位过
+  int _page = -1;
+
+  void _goPage(int p, int pageCount) {
+    final next = p.clamp(0, pageCount - 1);
+    if (next != _page) setState(() => _page = next);
+  }
+
   late final AnimationController _pulse = AnimationController(
     vsync: this,
     duration: const Duration(milliseconds: 1600),
@@ -148,11 +156,17 @@ class _IslandMapState extends State<IslandMap>
 
       final all = _orderedLevels();
       final count = all.length;
-      final window = min(kLevelSpots.length, count);
       var curIdx = all.indexWhere((l) => l.current);
       if (curIdx < 0) curIdx = 0;
-      final start = (curIdx - 2).clamp(0, count - window);
-      final shown = all.sublist(start, start + window);
+
+      // 每 10 关一页（正好对上岛上 10 块台子）
+      final perPage = kLevelSpots.length;
+      final pageCount = max(1, (count + perPage - 1) ~/ perPage);
+      final curPage = (curIdx ~/ perPage).clamp(0, pageCount - 1).toInt();
+      if (_page < 0) _page = curPage;
+      _page = _page.clamp(0, pageCount - 1).toInt();
+      final start = (_page * perPage).clamp(0, max(0, count - 1)).toInt();
+      final shown = all.sublist(start, min(start + perPage, count));
 
       final radius = max(15.0, art.width * 0.038);
 
@@ -213,6 +227,14 @@ class _IslandMapState extends State<IslandMap>
           Positioned.fill(
             child: GestureDetector(
               behavior: HitTestBehavior.translucent,
+              onHorizontalDragEnd: (d) {
+                final v = d.primaryVelocity ?? 0;
+                if (v < -120) {
+                  _goPage(_page + 1, pageCount);
+                } else if (v > 120) {
+                  _goPage(_page - 1, pageCount);
+                }
+              },
               onTapUp: (d) {
                 _Spot? best;
                 var bestD = 1e9;
@@ -270,9 +292,87 @@ class _IslandMapState extends State<IslandMap>
               ),
             ),
           ),
+          // 右上：翻页（每页 10 关，共 78 关）
+          Positioned(
+            right: 12,
+            top: 12,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 3),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(999),
+                color: Colors.white.withValues(alpha: 0.90),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.12),
+                    blurRadius: 8,
+                    offset: const Offset(0, 3),
+                  ),
+                ],
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  _pageButton(
+                    key: const ValueKey('page-prev'),
+                    text: '◀',
+                    enabled: _page > 0,
+                    onTap: () => _goPage(_page - 1, pageCount),
+                  ),
+                  Text(
+                    '${start + 1}-${start + shown.length} / $count',
+                    style: const TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w800,
+                      color: Color(0xFF4C423A),
+                    ),
+                  ),
+                  _pageButton(
+                    key: const ValueKey('page-next'),
+                    text: '▶',
+                    enabled: _page < pageCount - 1,
+                    onTap: () => _goPage(_page + 1, pageCount),
+                  ),
+                ],
+              ),
+            ),
+          ),
         ],
       );
     });
+  }
+
+  Widget _pageButton({
+    required Key key,
+    required String text,
+    required bool enabled,
+    required VoidCallback onTap,
+  }) {
+    return GestureDetector(
+      key: key,
+      behavior: HitTestBehavior.opaque,
+      onTap: enabled ? onTap : null,
+      child: Container(
+        width: 30,
+        height: 30,
+        margin: const EdgeInsets.symmetric(horizontal: 2),
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: enabled
+              ? const Color(0xFFFFB347)
+              : const Color(0xFFE1E4E8),
+        ),
+        child: Center(
+          child: Text(
+            text,
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w900,
+              color: enabled ? Colors.white : const Color(0xFFAAB0B6),
+            ),
+          ),
+        ),
+      ),
+    );
   }
 
   MapLevel _levelOf(_Spot s) => MapLevel(
