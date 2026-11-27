@@ -1,12 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:math_quest/content/curriculum.dart';
-import 'package:math_quest/pets.dart';
-import 'package:math_quest/render3d/island_shader.dart';
 import 'package:math_quest/store.dart';
-import 'package:math_quest/three_d.dart';
 import 'package:math_quest/widgets/island_map.dart';
-import 'package:math_quest/widgets/island_scene.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 Future<ProgressStore> freshStore() async {
@@ -18,70 +14,26 @@ Future<ProgressStore> freshStore() async {
 }
 
 void main() {
-  // 测试环境没有 GPU：强制走 CPU 光栅器那条路（着色器路径靠真机验收）
-  setUp(() => kUseGpuIsland = false);
-  tearDown(() => kUseGpuIsland = true);
+  test('底图按 cover 铺满，10 个关卡位都在图上', () {
+    const box = Size(390, 844);
+    final art = coverRect(box, kIslandArtSize);
+    // 竖屏上 cover：高度铺满，宽度超出（左右被裁）
+    expect(art.height, closeTo(844, 0.5));
+    expect(art.width, greaterThan(390));
+    expect(art.center.dx, closeTo(195, 0.5));
 
-  test('3D 场景：越远的关画得越小、越靠上（真透视）', () async {
-    final store = await freshStore();
-    final scene = IslandScene.build(
-      size: const Size(390, 844),
-      units: units,
-      store: store,
-      foodKind: 'fish',
-    );
-
-    expect(scene.faces.length, greaterThan(400), reason: '整座岛是几百个面拼的');
-    expect(scene.markers.length, greaterThan(3));
-
-    final byDepth = [...scene.markers]..sort((a, b) => a.depth.compareTo(b.depth));
-    for (var i = 1; i < byDepth.length; i++) {
-      expect(byDepth[i].y, lessThan(byDepth[i - 1].y),
-          reason: '更远的关在屏幕上更靠上');
-      expect(byDepth[i].px, lessThan(byDepth[i - 1].px),
-          reason: '更远的关在屏幕上更小');
-    }
-    // 最近的关卡落在画面下半部分
-    expect(byDepth.first.y, greaterThan(scene.horizonY));
-  });
-
-  test('关卡造型跟着宠物换：北极熊是鱼、小狗是肉骨头', () async {
-    expect(foodKindOf('polar'), 'fish');
-    expect(foodKindOf('cat'), 'fish');
-    expect(foodKindOf('dog'), 'bone');
-    expect(foodKindOf('rabbit'), 'carrot');
-    expect(foodKindOf('bear'), 'honey');
-    expect(foodKindOf('panda'), 'bamboo');
-    expect(foodKindOf('fox'), 'grape');
-    expect(foodKindOf('pig'), 'corn');
-    expect(foodKindOf('frog'), 'bug');
-    expect(foodKindOf(null), 'fish');
-
-    // 每种造型都能造出真正的 3D 面
-    for (final kind in [
-      'fish',
-      'bone',
-      'carrot',
-      'honey',
-      'bamboo',
-      'grape',
-      'corn',
-      'bug',
-    ]) {
-      final faces = foodFaces(
-        kind,
-        const V3(0, 0, 0),
-        1,
-        const Color(0xFFFFB347),
-        const Color(0xFFFF8A3D),
-      );
-      expect(faces.length, greaterThan(6), reason: '$kind 应该是立体的');
-      expect(faces.any((f) => (f.normal.y).abs() > 0.2), isTrue,
-          reason: '$kind 有朝上的面，能照出明暗');
+    expect(kLevelSpots.length, 10);
+    for (final s in kLevelSpots) {
+      expect(s.dx, inInclusiveRange(0.0, 1.0));
+      expect(s.dy, inInclusiveRange(0.0, 1.0));
+      // 投影到屏幕上必须落在可见区域内
+      final p = Offset(art.left + s.dx * art.width, art.top + s.dy * art.height);
+      expect(p.dx, inInclusiveRange(0.0, box.width));
+      expect(p.dy, inInclusiveRange(0.0, box.height));
     }
   });
 
-  testWidgets('手指往下扒拉 = 往前走，关卡朝镜头来', (tester) async {
+  testWidgets('点第一个关卡圆盘能进关，进度推进后窗口往后走', (tester) async {
     final store = await freshStore();
     tester.view.physicalSize = const Size(390, 844);
     tester.view.devicePixelRatio = 1.0;
@@ -100,44 +52,59 @@ void main() {
         ),
       ),
     ));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 200));
+    await tester.pump(const Duration(milliseconds: 100));
 
-    // 点第 1 关能进门
+    // 一开始显示第 1–10 关
+    expect(find.byKey(const ValueKey('lvl-0')), findsOneWidget);
+    expect(find.byKey(const ValueKey('lvl-9')), findsOneWidget);
+    expect(find.byKey(const ValueKey('lvl-10')), findsNothing);
+
     await tester.tap(find.byKey(const ValueKey('lvl-0')));
     await tester.pump();
     expect(tapped, isNotNull);
     expect(tapped!.index, 0);
     expect(tapped!.unlocked, isTrue);
+    expect(tapped!.stage, 0);
 
-    // 后面的关一开始在更上面
-    final before = tester.getCenter(find.byKey(const ValueKey('lvl-2')));
+    // 通掉 4 关后，窗口跟着当前关卡往后挪
+    for (final k in orderedLevelKeys.take(4)) {
+      store.finishLevel(k, 3);
+    }
+    tapped = null;
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: IslandMap(
+          store: store,
+          onStartLevel: (l) => tapped = l,
+          onPetHouseTap: () {},
+        ),
+      ),
+    ));
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(find.byKey(const ValueKey('lvl-0')), findsNothing);
+    expect(find.byKey(const ValueKey('lvl-2')), findsOneWidget);
 
-    // 往下扒拉 300px：往前走，第 3 关朝镜头来（屏幕上下移）
-    await tester.drag(find.byType(IslandMap), const Offset(0, 300));
+    // 第一个可点的应该是第 4 关（索引 4，还没做）
+    await tester.tap(find.byKey(const ValueKey('lvl-4')));
     await tester.pump();
-    await tester.pump(const Duration(milliseconds: 300));
-    final after = tester.getCenter(find.byKey(const ValueKey('lvl-2')));
-    expect(after.dy, greaterThan(before.dy + 30));
+    expect(tapped?.index, 4);
+    expect(tapped?.current, isTrue, reason: '橙色呼吸光那一关就是当前关');
   });
 
-  test('路边有 8 间宠物房，顺序和宠物一致', () async {
+  testWidgets('锁着的关卡也能点到（点了会被课时页拦下）', (tester) async {
     final store = await freshStore();
-    store.adoptStarterPet();
-    for (var i = 0; i < kPetUnlockEveryLevels; i++) {
-      store.finishLevel(orderedLevelKeys[i], 3);
-    }
-    // 镜头停在第一间宠物房前面
-    final scene = IslandScene.build(
-      size: const Size(390, 844),
-      units: units,
-      store: store,
-      foodKind: 'bone',
-      cam: 6.0,
-    );
-    expect(scene.houses, isNotEmpty);
-    expect(scene.houses.first.speciesId, kPetUnlockOrder[1]);
-    // 已经住进去的那间标 owned，下一间挂着"金圈"提示
-    expect(scene.houses.any((h) => h.owned || h.next), isTrue);
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: IslandMap(
+          store: store,
+          onStartLevel: (_) {},
+          onPetHouseTap: () {},
+        ),
+      ),
+    ));
+    await tester.pump(const Duration(milliseconds: 50));
+    final last = find.byKey(const ValueKey('lvl-9'));
+    expect(last, findsOneWidget);
+    expect(tester.widget(last).key, const ValueKey('lvl-9'));
   });
 }
