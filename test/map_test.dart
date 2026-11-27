@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:math_quest/content/curriculum.dart';
 import 'package:math_quest/pets.dart';
+import 'package:math_quest/render3d/island_shader.dart';
 import 'package:math_quest/store.dart';
 import 'package:math_quest/three_d.dart';
 import 'package:math_quest/widgets/island_map.dart';
@@ -17,6 +18,10 @@ Future<ProgressStore> freshStore() async {
 }
 
 void main() {
+  // 测试环境没有 GPU：强制走 CPU 光栅器那条路（着色器路径靠真机验收）
+  setUp(() => kUseGpuIsland = false);
+  tearDown(() => kUseGpuIsland = true);
+
   test('3D 场景：越远的关画得越小、越靠上（真透视）', () async {
     final store = await freshStore();
     final scene = IslandScene.build(

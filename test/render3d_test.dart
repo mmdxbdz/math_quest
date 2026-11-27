@@ -35,7 +35,6 @@ Rasterizer3D rasterFor(int w, int h) {
     ambient: 0.30,
     fogNear: 15,
     fogFar: 34,
-    skyColor: kBg,
   )..clear(kBg);
   return r;
 }

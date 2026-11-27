@@ -77,11 +77,17 @@ class _Demo3DState extends State<Demo3D> {
     final raster = Rasterizer3D(
       width: w,
       height: h,
-      lightDir: const V3(-0.55, 0.78, 0.42),
-      ambient: 0.30,
-      fogNear: 15,
+      lightDir: const V3(-0.45, 0.78, -0.42),
+      lightColor: const Color(0xFFFFF3DA),
+      ambient: 0.34,
+      skyTint: const Color(0xFFB6DBF5),
+      skyStrength: 0.20,
+      groundTint: const Color(0xFFE7B67A),
+      groundStrength: 0.10,
+      aoStrength: 0.55,
+      fogColor: const Color(0xFFCFE6EE),
+      fogNear: 16,
       fogFar: 34,
-      skyColor: _bg,
     );
     raster.clear(_bg);
     raster.renderScene(scene, camera);

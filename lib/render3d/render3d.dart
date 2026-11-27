@@ -240,6 +240,34 @@ class Camera3D {
 
   /// P * V
   M4 viewProjection(double aspect) => projectionMatrix(aspect) * viewMatrix();
+
+  /// 把一个世界坐标点投影到屏幕（给贴在 3D 位置上的 2D 标签用）
+  Projected? projectPoint(V3 p, double aspect, Size size) {
+    final v = viewProjection(aspect).transformPoint(p);
+    if (v.w <= 0.0001) return null;
+    final invW = 1.0 / v.w;
+    return Projected(
+      Offset(
+        (v.x * invW * 0.5 + 0.5) * size.width,
+        (0.5 - v.y * invW * 0.5) * size.height,
+      ),
+      v.w,
+      // 1 世界单位 = 多少像素（焦距 / 深度 / 宽高比修正）
+      (size.height / 2 / tan(fovY / 2)) * invW,
+    );
+  }
+}
+
+/// 屏幕上的投影结果
+class Projected {
+  final Offset at;
+
+  /// 与相机的距离（世界单位）
+  final double depth;
+
+  /// 世界 1 单位在屏幕上占多少像素
+  final double pixelsPerUnit;
+  const Projected(this.at, this.depth, this.pixelsPerUnit);
 }
 
 // ───────────────────────────── 网格 ─────────────────────────────
@@ -354,7 +382,27 @@ class MeshInstance {
 
 // ───────────────────────────── 光栅器 ─────────────────────────────
 
-/// 逐像素软件光栅器：Z-buffer + 透视校正插值 + Lambert/Blinn-Phong 着色
+/// 贴在某个物体脚下的"接触阴影"（AO）来源
+class ShadowCaster {
+  /// 物体贴地中心
+  final V3 at;
+
+  /// 接触半径
+  final double radius;
+
+  /// 物体高度：太阳把影子沿光线方向拉多长就靠它（0 = 只有脚下一圈）
+  final double height;
+  const ShadowCaster(this.at, this.radius, {this.height = 1.0});
+}
+
+/// 逐像素软件光栅器：Z-buffer + 透视校正插值 + 完整光照
+///
+/// 着色公式（每个像素）：
+///   color = ambient*base + max(0, N·L)*lightColor*base        ← 主光
+///         + skyTint*max(0,N.y)*skyStrength                     ← 天光（朝上偏冷）
+///         + groundTint*max(0,-N.y)*groundStrength              ← 地面反弹（朝下偏暖）
+///         + spec                                               ← 高光
+///   再乘接触阴影 AO，最后按深度做大气透视（降饱和 + 混雾色）
 class Rasterizer3D {
   final int width;
   final int height;
@@ -365,24 +413,230 @@ class Rasterizer3D {
   /// 深度缓冲（存 NDC z，越小越近）
   final Float32List depth;
 
-  final V3 lightDir; // 指向光源的单位向量
+  /// 太阳方向（指向光源的单位向量，构造时自动归一化）
+  final V3 lightDir;
+  final Color lightColor;
+
+  /// 阳光强度（1.0 时 N·L 全量；调小一点，浅色路面才不会烧成纯白）
+  final double sunIntensity;
+
+  /// 每个面一点随机的深浅抖动，打散"整片叶子一个色"的剪纸感
+  final double faceVariation;
+
+  /// 环境光（0.30 ~ 0.40）
   final double ambient;
-  final Color skyColor;
+
+  /// 天光：朝上的面偏冷
+  final Color skyTint;
+  final double skyStrength;
+
+  /// 地面反弹光：朝下的面偏暖
+  final Color groundTint;
+  final double groundStrength;
+
+  /// 接触阴影强度（0 = 关）
+  final double aoStrength;
+
+  /// 太阳投影的深浅（影子本身有多暗）
+  final double shadowStrength;
+
+  /// 双面光照：法线背对相机时翻到正面用。
+  /// 地形、路面、树叶都是单面片，没有背面；不翻的话整片地面永远只有 ambient 亮度，
+  /// 看起来就是一张没有光照的纯色卡。
+  final bool twoSided;
+
+  /// 地面材质噪声强度：让草地和路面不是一个纯色块
+  final double noiseStrength;
+
+  /// 镜面高光强度
+  final double specStrength;
+
+  /// 关掉光照只留 ambient —— 用来做"没有光照"的对比图
+  final bool lightingEnabled;
+
+  final Color fogColor;
   final double fogNear;
   final double fogFar;
+
+  /// 大气透视：远处去饱和的比例
+  final double fogDesat;
+
+  /// 阴影来源
+  final List<ShadowCaster> casters;
+
+  // ── 预烘好的阴影场（世界 XZ 平面上的栅格）──
+  Float32List? _shadow;
+  double _shX0 = 0, _shZ0 = 0, _shCell = 0.35;
+  int _shW = 0, _shH = 0;
 
   Rasterizer3D({
     required this.width,
     required this.height,
-    this.lightDir = const V3(-0.5, 0.85, 0.4),
-    this.ambient = 0.30,
-    this.skyColor = const Color(0xFFBFE3F5),
-    this.fogNear = 14,
+    V3 lightDir = const V3(-0.45, 0.78, -0.42),
+    this.lightColor = const Color(0xFFFFF3DA),
+    this.sunIntensity = 0.82,
+    this.faceVariation = 0.08,
+    this.ambient = 0.34,
+    this.skyTint = const Color(0xFFB6DBF5),
+    this.skyStrength = 0.20,
+    this.groundTint = const Color(0xFFE7B67A),
+    this.groundStrength = 0.10,
+    this.aoStrength = 0.55,
+    this.shadowStrength = 0.60,
+    this.twoSided = true,
+    this.noiseStrength = 0.10,
+    this.specStrength = 0.35,
+    this.lightingEnabled = true,
+    this.fogColor = const Color(0xFFCFE6EE),
+    this.fogNear = 16,
     this.fogFar = 34,
-  })  : pixels = Uint8List(width * height * 4),
+    this.fogDesat = 0.65,
+    this.casters = const [],
+  })  : lightDir = lightDir.normalized,
+        pixels = Uint8List(width * height * 4),
         depth = Float32List(width * height);
 
+  /// 预烘一张"地面阴影场"：每个格子里记 0~1 的阴影浓度。
+  ///
+  /// 每个 caster 当成一根竖着的胶囊（脚底 → 头顶），沿光线方向投到 y=0 平面上，
+  /// 得到一个从脚下往背光侧拉长的影子。比"脚下压暗一圈"真实得多：
+  /// 树影会顺着一侧倒下去，而且离树越远越淡。
+  void _buildGrid() {
+    if (casters.isEmpty || shadowStrength <= 0) {
+      _shadow = null;
+      return;
+    }
+    final ly = lightDir.y.abs() < 1e-4 ? 1e-4 : lightDir.y;
+    var minX = double.infinity, maxX = -double.infinity;
+    var minZ = double.infinity, maxZ = -double.infinity;
+
+    double topX(ShadowCaster c) => c.at.x - lightDir.x * (c.height / ly);
+    double topZ(ShadowCaster c) => c.at.z - lightDir.z * (c.height / ly);
+
+    for (final c in casters) {
+      final pad = c.radius * 1.9 + 0.5;
+      minX = min(minX, min(c.at.x, topX(c)) - pad);
+      maxX = max(maxX, max(c.at.x, topX(c)) + pad);
+      minZ = min(minZ, min(c.at.z, topZ(c)) - pad);
+      maxZ = max(maxZ, max(c.at.z, topZ(c)) + pad);
+    }
+    if (!minX.isFinite) {
+      _shadow = null;
+      return;
+    }
+
+    const cell = 0.25;
+    final w = ((maxX - minX) / cell).ceil() + 1;
+    final h = ((maxZ - minZ) / cell).ceil() + 1;
+    if (w <= 0 || h <= 0 || w * h > 4000000) {
+      _shadow = null;
+      return;
+    }
+    final field = Float32List(w * h);
+
+    for (final c in casters) {
+      final ax = c.at.x, az = c.at.z;
+      final bx = topX(c), bz = topZ(c);
+      final r = c.radius * 1.05; // 影子比本体宽一点点
+      final segX = bx - ax, segZ = bz - az;
+      final segLen2 = segX * segX + segZ * segZ;
+      final c0 = max(0, ((min(ax, bx) - r - minX) / cell).floor());
+      final c1 = min(w - 1, ((max(ax, bx) + r - minX) / cell).ceil());
+      final r0 = max(0, ((min(az, bz) - r - minZ) / cell).floor());
+      final r1 = min(h - 1, ((max(az, bz) + r - minZ) / cell).ceil());
+      for (var iz = r0; iz <= r1; iz++) {
+        final pz = minZ + iz * cell;
+        for (var ix = c0; ix <= c1; ix++) {
+          final px = minX + ix * cell;
+          // 到"脚底—头顶"这条线段在 XZ 上投影的距离
+          var t = segLen2 < 1e-9
+              ? 0.0
+              : ((px - ax) * segX + (pz - az) * segZ) / segLen2;
+          if (t < 0) t = 0;
+          if (t > 1) t = 1;
+          final dx = px - (ax + segX * t);
+          final dz = pz - (az + segZ * t);
+          final d = sqrt(dx * dx + dz * dz);
+          if (d >= r) continue;
+          var v = 1.0 - d / r;
+          v = v * v * (3 - 2 * v); // 边缘柔化
+          final i = iz * w + ix;
+          if (v > field[i]) field[i] = v;
+        }
+      }
+    }
+
+    // 一次 3x3 模糊，让影子边缘是软的
+    final blurred = Float32List(w * h);
+    for (var iz = 0; iz < h; iz++) {
+      for (var ix = 0; ix < w; ix++) {
+        var s = 0.0;
+        var n = 0;
+        for (var j = -1; j <= 1; j++) {
+          final zz = iz + j;
+          if (zz < 0 || zz >= h) continue;
+          for (var k = -1; k <= 1; k++) {
+            final xx = ix + k;
+            if (xx < 0 || xx >= w) continue;
+            s += field[zz * w + xx];
+            n++;
+          }
+        }
+        blurred[iz * w + ix] = s / n;
+      }
+    }
+
+    _shadow = blurred;
+    _shX0 = minX;
+    _shZ0 = minZ;
+    _shCell = cell;
+    _shW = w;
+    _shH = h;
+  }
+
+  /// 地面某点的阴影浓度：0 = 晒得到太阳，1 = 完全在阴影里
+  double _aoAt(double x, double z) {
+    final fld = _shadow;
+    if (fld == null) return 0;
+    final fx = (x - _shX0) / _shCell;
+    final fz = (z - _shZ0) / _shCell;
+    if (fx < 0 || fz < 0 || fx > _shW - 1.001 || fz > _shH - 1.001) return 0;
+    final ix = fx.floor(), iz = fz.floor();
+    final tx = fx - ix, tz = fz - iz;
+    final i0 = iz * _shW + ix;
+    final i1 = i0 + _shW;
+    final a = fld[i0] * (1 - tx) + fld[i0 + 1] * tx;
+    final b = fld[i1] * (1 - tx) + fld[i1 + 1] * tx;
+    return a * (1 - tz) + b * tz;
+  }
+
+  static double _hash(int ix, int iz) {
+    var h = ix * 374761393 + iz * 668265263;
+    h = (h ^ (h >> 13)) * 1274126177;
+    h = h ^ (h >> 16);
+    return (h & 0xFFFF) / 65535.0;
+  }
+
+  static double _hash3(double x, double y, double z) {
+    final ix = (x * 57.0).round();
+    final iy = (y * 57.0).round();
+    final iz = (z * 57.0).round();
+    return _hash(ix * 31 + iy, iz);
+  }
+
+  /// 平滑插值的 value noise（0~1）
+  static double _valueNoise(double x, double z) {
+    final x0 = x.floor(), z0 = z.floor();
+    final fx = x - x0, fz = z - z0;
+    final sx = fx * fx * (3 - 2 * fx);
+    final sz = fz * fz * (3 - 2 * fz);
+    final a = _hash(x0, z0), b = _hash(x0 + 1, z0);
+    final c = _hash(x0, z0 + 1), d = _hash(x0 + 1, z0 + 1);
+    return (a * (1 - sx) + b * sx) * (1 - sz) + (c * (1 - sx) + d * sx) * sz;
+  }
+
   void clear(Color bg) {
+    final al = (bg.a * 255).round();
     final r = (bg.r * 255).round();
     final g = (bg.g * 255).round();
     final b = (bg.b * 255).round();
@@ -390,13 +644,14 @@ class Rasterizer3D {
       pixels[i] = r;
       pixels[i + 1] = g;
       pixels[i + 2] = b;
-      pixels[i + 3] = 255;
+      pixels[i + 3] = al;
     }
     depth.fillRange(0, depth.length, double.infinity);
   }
 
   /// 渲染一帧：模型矩阵 × 视图矩阵 × 投影矩阵，然后光栅化 + 深度测试 + 光照
   void renderScene(List<MeshInstance> instances, Camera3D camera) {
+    _buildGrid();
     final vp = camera.viewProjection(width / height);
     for (final inst in instances) {
       final mvp = vp * inst.model;
@@ -442,12 +697,26 @@ class Rasterizer3D {
     final na = model.transformNormal(tri.na);
     final nb = model.transformNormal(tri.nb);
     final nc = model.transformNormal(tri.nc);
-    final base = tri.color;
-
     // 顶点世界坐标（算光照与雾）
     final wa = model.transformPoint(tri.a);
     final wb = model.transformPoint(tri.b);
     final wc = model.transformPoint(tri.c);
+
+    // 每个面一点点深浅抖动：一片叶子是一个面，不抖的话整片叶子同一个色，
+    // 看着就是剪纸。抖动按面心位置哈希，稳定不闪。
+    var base = tri.color;
+    if (faceVariation > 0) {
+      final cxw = (wa.x + wb.x + wc.x) / 3;
+      final cyw = (wa.y + wb.y + wc.y) / 3;
+      final czw = (wa.z + wb.z + wc.z) / 3;
+      final v = 1.0 + (_hash3(cxw, cyw, czw) - 0.5) * 2 * faceVariation;
+      base = Color.fromARGB(
+        (base.a * 255).round(),
+        ((base.r * v) * 255).round().clamp(0, 255),
+        ((base.g * v) * 255).round().clamp(0, 255),
+        ((base.b * v) * 255).round().clamp(0, 255),
+      );
+    }
 
     final camPos = camera.position;
     final invArea = 1.0 / area;
@@ -484,47 +753,111 @@ class Rasterizer3D {
         final nz = na.z * b0 + nb.z * b1 + nc.z * b2;
         final nl = sqrt(nx * nx + ny * ny + nz * nz);
         if (nl < 1e-9) continue;
-        final ux = nx / nl, uy = ny / nl, uz = nz / nl;
+        var ux = nx / nl, uy = ny / nl, uz = nz / nl;
 
         // 世界位置
         final wx = wa.x * b0 + wb.x * b1 + wc.x * b2;
         final wy = wa.y * b0 + wb.y * b1 + wc.y * b2;
         final wz = wa.z * b0 + wb.z * b1 + wc.z * b2;
 
-        // ⑧ 光照：漫反射 N·L + Blinn-Phong 镜面
-        var diff = ux * lightDir.x + uy * lightDir.y + uz * lightDir.z;
-        if (diff < 0) diff = 0;
-        // 视线（像素 → 相机）
+        // ⑧ 光照：全部由法线算，没有写死的色值
         final vx = camPos.x - wx, vy = camPos.y - wy, vz = camPos.z - wz;
         final vlen = sqrt(vx * vx + vy * vy + vz * vz);
-        var spec = 0.0;
-        if (vlen > 0.0001 && diff > 0) {
-          final hx = (lightDir.x + vx / vlen) * 0.5;
-          final hy = (lightDir.y + vy / vlen) * 0.5;
-          final hz = (lightDir.z + vz / vlen) * 0.5;
-          final hl = sqrt(hx * hx + hy * hy + hz * hz);
-          final ndoth = (ux * hx + uy * hy + uz * hz) / hl;
-          if (ndoth > 0) spec = pow(ndoth, 28).toDouble() * 0.45;
+
+        // 双面光照：单面片（地形、路面、树叶）法线朝反了就翻过来，
+        // 否则整片地面永远 N·L = 0，只剩 ambient，看着像没开灯
+        if (twoSided && vlen > 1e-6 && ux * vx + uy * vy + uz * vz < 0) {
+          ux = -ux;
+          uy = -uy;
+          uz = -uz;
         }
-        final k = ambient + 0.85 * diff;
 
-        var r = base.r * k + spec;
-        var g = base.g * k + spec;
-        var b = base.b * k + spec;
+        double r, g, b;
+        if (!lightingEnabled) {
+          // 只有 ambient（对比图用）：所有面同一个亮度，看不出体积
+          r = base.r * 0.62;
+          g = base.g * 0.62;
+          b = base.b * 0.62;
+        } else {
+          // 主光：max(0, N·L)
+          var ndl = ux * lightDir.x + uy * lightDir.y + uz * lightDir.z;
+          if (ndl < 0) ndl = 0;
 
-        // ⑨ 距离雾
+          // 天光（朝上的面偏冷）/ 地面反弹（朝下的面偏暖）
+          final up = uy > 0 ? uy : 0.0;
+          final down = uy < 0 ? -uy : 0.0;
+
+          final sun = ndl * sunIntensity;
+          r = base.r * ambient +
+              base.r * sun * lightColor.r +
+              skyTint.r * up * skyStrength +
+              groundTint.r * down * groundStrength;
+          g = base.g * ambient +
+              base.g * sun * lightColor.g +
+              skyTint.g * up * skyStrength +
+              groundTint.g * down * groundStrength;
+          b = base.b * ambient +
+              base.b * sun * lightColor.b +
+              skyTint.b * up * skyStrength +
+              groundTint.b * down * groundStrength;
+
+          // Blinn-Phong 高光（只有朝光的面才有）
+          if (specStrength > 0 && ndl > 0 && vlen > 0.0001) {
+            final hx = (lightDir.x + vx / vlen) * 0.5;
+            final hy = (lightDir.y + vy / vlen) * 0.5;
+            final hz = (lightDir.z + vz / vlen) * 0.5;
+            final hl = sqrt(hx * hx + hy * hy + hz * hz);
+            final ndoth = (ux * hx + uy * hy + uz * hz) / hl;
+            if (ndoth > 0) {
+              final s = pow(ndoth, 26).toDouble() * specStrength;
+              r += s;
+              g += s;
+              b += s;
+            }
+          }
+
+          // 太阳投影 + 接触阴影：贴地的面（草、路、屋顶）落到影子里就压暗
+          if (uy > 0.28 && (shadowStrength > 0 || aoStrength > 0)) {
+            final sh = _aoAt(wx, wz);
+            if (sh > 0) {
+              final k = 1.0 - shadowStrength * sh;
+              r *= k;
+              g *= k;
+              b *= k;
+            }
+          }
+
+          // 材质噪声：草地/石板不该是一整块纯色
+          if (noiseStrength > 0 && uy > 0.55) {
+            final nA = _valueNoise(wx * 1.9, wz * 1.9);
+            final nB = _valueNoise(wx * 0.42, wz * 0.42);
+            final k = 1.0 +
+                ((nA - 0.5) * 1.1 + (nB - 0.5) * 1.5) * noiseStrength;
+            r *= k;
+            g *= k;
+            b *= k;
+          }
+        }
+
+        // ⑨ 大气透视：远处降饱和 + 往雾色 lerp
         if (vlen > fogNear) {
           var t = (vlen - fogNear) / (fogFar - fogNear);
           if (t > 1) t = 1;
-          r = r + (skyColor.r - r) * t * 0.9;
-          g = g + (skyColor.g - g) * t * 0.9;
-          b = b + (skyColor.b - b) * t * 0.9;
+          final lum = 0.299 * r + 0.587 * g + 0.114 * b;
+          final ds = t * fogDesat;
+          r += (lum - r) * ds;
+          g += (lum - g) * ds;
+          b += (lum - b) * ds;
+          r += (fogColor.r - r) * t;
+          g += (fogColor.g - g) * t;
+          b += (fogColor.b - b) * t;
         }
 
         final o = idx * 4;
         pixels[o] = (r.clamp(0.0, 1.0) * 255).round();
         pixels[o + 1] = (g.clamp(0.0, 1.0) * 255).round();
         pixels[o + 2] = (b.clamp(0.0, 1.0) * 255).round();
+        pixels[o + 3] = 255; // 画到的像素一定不透明
       }
     }
   }

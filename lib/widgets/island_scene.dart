@@ -40,6 +40,7 @@ String foodKindOf(String? speciesId) {
 class SceneMarker {
   final int index;
   final double depth;
+  final V3 world;
   final Lesson lesson;
   final int stage;
   final String key;
@@ -54,6 +55,7 @@ class SceneMarker {
   const SceneMarker({
     required this.index,
     required this.depth,
+    required this.world,
     required this.lesson,
     required this.stage,
     required this.key,
@@ -70,6 +72,7 @@ class SceneMarker {
 
 class SceneSign {
   final Unit unit;
+  final double world;
   final int done;
   final int total;
   final int firstLevel;
@@ -80,6 +83,7 @@ class SceneSign {
   final double depth;
   const SceneSign({
     required this.unit,
+    required this.world,
     required this.done,
     required this.total,
     required this.firstLevel,
@@ -94,6 +98,7 @@ class SceneSign {
 class SceneHouse {
   final String speciesId;
   final int order;
+  final V3 world;
   final bool owned;
   final bool next;
   final double x;
@@ -103,6 +108,7 @@ class SceneHouse {
   const SceneHouse({
     required this.speciesId,
     required this.order,
+    required this.world,
     required this.owned,
     required this.next,
     required this.x,
@@ -112,8 +118,21 @@ class SceneHouse {
   });
 }
 
+/// 一个"会在地上压出接触阴影"的东西（贴地中心 + 接触半径）
+class SceneCaster {
+  final V3 at;
+  final double r;
+
+  /// 物体高度：太阳把影子拉多长由它决定
+  final double h;
+  const SceneCaster(this.at, this.r, {this.h = 1.0});
+}
+
 class IslandScene {
   final List<Face3D> faces;
+
+  /// 接触阴影来源（树、石头、房子、关卡小物件）
+  final List<SceneCaster> casters;
   final List<SceneMarker> markers;
   final List<SceneSign> signs;
   final List<SceneHouse> houses;
@@ -125,6 +144,7 @@ class IslandScene {
 
   const IslandScene({
     required this.faces,
+    required this.casters,
     required this.markers,
     required this.signs,
     required this.houses,
@@ -252,8 +272,14 @@ class IslandScene {
     for (var ss = camS - 6; ss <= camS + 34; ss += 0.85) {
       rows.add(ss);
     }
-    const grassA = Color(0xFFA6E178);
-    const grassB = Color(0xFF92D667);
+    // 草地用四档深浅按位置哈希来铺，不用棋盘格：
+    // 棋盘格会被眼睛读成"贴图平铺"，随机深浅才像一片真的草地。
+    const grassTones = [
+      Color(0xFFA6E178),
+      Color(0xFF9ADB6B),
+      Color(0xFFB2E787),
+      Color(0xFF90D263),
+    ];
     for (var r = 0; r < rows.length - 1; r++) {
       final s0 = rows[r];
       final s1 = rows[r + 1];
@@ -261,12 +287,14 @@ class IslandScene {
         final u0 = latU[c];
         final u1 = latU[c + 1];
         if (u0 >= -roadHalf - 0.06 && u1 <= roadHalf + 0.06) continue;
+        var h = r * 73856093 ^ c * 19349663;
+        h = (h ^ (h >> 13)) & 0x7fffffff;
         faces.add(quad3(
           pointOn(s0, u0),
           pointOn(s0, u1),
           pointOn(s1, u1),
           pointOn(s1, u0),
-          (r + c).isEven ? grassA : grassB,
+          grassTones[h % grassTones.length],
         ));
       }
     }
@@ -275,13 +303,21 @@ class IslandScene {
     for (var r = 0; r < rows.length - 1; r++) {
       final s0 = rows[r];
       final s1 = rows[r + 1];
-      final tile = (s0 / 1.1).floor().isEven;
+      // 石板一档一档换色（偏暖的沙色，别再铺成一片白）
+      const pathTones = [
+        Color(0xFFE9D2A4),
+        Color(0xFFDFC491),
+        Color(0xFFF1DEB6),
+        Color(0xFFD8BB84),
+      ];
+      var ph = r * 2654435761;
+      ph = (ph ^ (ph >> 15)) & 0x7fffffff;
       faces.add(quad3(
         V3(roadX(s0) - roadHalf, roadY(s0) + 0.012, s0),
         V3(roadX(s0) + roadHalf, roadY(s0) + 0.012, s0),
         V3(roadX(s1) + roadHalf, roadY(s1) + 0.012, s1),
         V3(roadX(s1) - roadHalf, roadY(s1) + 0.012, s1),
-        tile ? const Color(0xFFFFF7DE) : const Color(0xFFF2E3BE),
+        pathTones[ph % pathTones.length],
       ));
       for (final side in const [-1.0, 1.0]) {
         final u0 = side * roadHalf;
@@ -297,6 +333,7 @@ class IslandScene {
     }
 
     // ── 路边的小物件
+    final casters = <SceneCaster>[];
     final rnd = Random(17);
     for (var i = 0; i < 58; i++) {
       final ss = camS - 4 + rnd.nextDouble() * 38;
@@ -307,6 +344,15 @@ class IslandScene {
       final p = pointOn(ss, u);
       final k = 0.7 + rnd.nextDouble() * 0.6;
       final kind = rnd.nextInt(10);
+      // 椰子树高、石头矮，影子长度差很多
+      final height = kind < 4
+          ? 4.6 * k
+          : kind < 6
+              ? 0.55 * k
+              : kind < 8
+                  ? 1.05 * k
+                  : 0.95 * k;
+      casters.add(SceneCaster(p, kind < 4 ? 0.55 * k : 0.42 * k, h: height));
       if (kind < 4) {
         faces.addAll(_palm(p, k, rnd));
       } else if (kind < 6) {
@@ -323,7 +369,9 @@ class IslandScene {
     // ── 山顶的灯塔
     final lhS = roadLength + 5;
     if (lhS - camS > 1.5 && lhS - camS < 34) {
-      faces.addAll(_lighthouse(pointOn(lhS, 0), 1.7));
+      final lhBase = pointOn(lhS, 0);
+      faces.addAll(_lighthouse(lhBase, 1.7));
+      casters.add(SceneCaster(lhBase, 1.90, h: 7.0));
     }
 
     // ── 关卡：一只只 3D 小东西摆在路上
@@ -335,6 +383,7 @@ class IslandScene {
       final base = V3(roadX(l.s) + u, roadY(l.s) + 0.02, l.s);
       final pr = camera.project(base);
       if (pr == null) continue;
+      casters.add(SceneCaster(base, 0.42, h: 0.62));
       final k = (pr.pixelsPerUnit * 0.50).clamp(8.0, 150.0);
       final main = l.locked
           ? const Color(0xFFB9BDC4)
@@ -353,6 +402,7 @@ class IslandScene {
       markers.add(SceneMarker(
         index: l.index,
         depth: d,
+        world: base,
         lesson: l.lesson,
         stage: l.stage,
         key: l.key,
@@ -377,9 +427,11 @@ class IslandScene {
       final pr = camera.project(base);
       if (pr == null) continue;
       faces.addAll(_house(base, 1.1));
+      casters.add(SceneCaster(base, 1.30, h: 2.4));
       sceneHouses.add(SceneHouse(
         speciesId: h.speciesId,
         order: h.order,
+        world: base,
         owned: h.owned,
         next: false,
         x: pr.at.dx,
@@ -394,6 +446,7 @@ class IslandScene {
       sceneHouses[nextHouse] = SceneHouse(
         speciesId: hh.speciesId,
         order: hh.order,
+        world: hh.world,
         owned: hh.owned,
         next: true,
         x: hh.x,
@@ -413,6 +466,7 @@ class IslandScene {
       if (pr == null) continue;
       sceneSigns.add(SceneSign(
         unit: sg.unit,
+        world: sg.s,
         done: sg.done,
         total: sg.total,
         firstLevel: sg.firstLevel,
@@ -426,6 +480,7 @@ class IslandScene {
 
     return IslandScene(
       faces: faces,
+      casters: casters,
       markers: markers,
       signs: sceneSigns,
       houses: sceneHouses,
@@ -509,27 +564,29 @@ List<Face3D> _palm(V3 base, double k, Random rnd) {
   for (var i = 0; i < 7; i++) {
     final a = i / 7 * 2 * pi + lean;
     final reach = (0.75 + rnd.nextDouble() * 0.35) * k;
-    final tip = V3(
-      top.x + cos(a) * reach,
-      top.y - 0.18 * k + rnd.nextDouble() * 0.12,
-      top.z + sin(a) * reach,
-    );
-    final mid = V3(
-      top.x + cos(a) * reach * 0.45,
-      top.y + 0.18 * k,
-      top.z + sin(a) * reach * 0.45,
-    );
-    final side1 =
-        V3(mid.x - sin(a) * 0.22 * k, mid.y, mid.z + cos(a) * 0.22 * k);
-    final side2 =
-        V3(mid.x + sin(a) * 0.22 * k, mid.y, mid.z - cos(a) * 0.22 * k);
-    final under = V3(mid.x, mid.y - 0.16 * k, mid.z);
-    final green = i.isEven ? const Color(0xFF63C74C) : const Color(0xFF83DD66);
-    final dark = i.isEven ? const Color(0xFF46A637) : const Color(0xFF5FBE49);
-    faces.add(tri3(top, side1, tip, green));
-    faces.add(tri3(top, tip, side2, green));
-    faces.add(tri3(side1, under, tip, dark));
-    faces.add(tri3(under, side2, tip, dark));
+    // 叶子做成一条"V"形槽、沿长度分两段并且先扬后垂：
+    // 每段的法线都不一样，叶面上才有连续的明暗过渡，不会是一整片死绿。
+    final green = i.isEven ? const Color(0xFF6FCF56) : const Color(0xFF8CE070);
+    final rings = <List<V3>>[];
+    for (var s = 0; s <= 2; s++) {
+      final t = s / 2.0;
+      final r = reach * t;
+      final cx = top.x + cos(a) * r;
+      final cz = top.z + sin(a) * r;
+      final cy = top.y + 0.30 * k * t - 0.58 * k * t * t;
+      final w = (s == 0 ? 0.045 : (s == 1 ? 0.23 : 0.05)) * k;
+      final px = -sin(a) * w, pz = cos(a) * w;
+      rings.add([
+        V3(cx + px, cy + 0.04 * k, cz + pz),
+        V3(cx, cy - 0.06 * k, cz),
+        V3(cx - px, cy + 0.04 * k, cz - pz),
+      ]);
+    }
+    for (var s = 0; s < 2; s++) {
+      final r0 = rings[s], r1 = rings[s + 1];
+      faces.add(quad3(r0[0], r0[1], r1[1], r1[0], green));
+      faces.add(quad3(r0[1], r0[2], r1[2], r1[1], green));
+    }
   }
   return faces;
 }

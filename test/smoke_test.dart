@@ -1,10 +1,14 @@
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:math_quest/main.dart';
+import 'package:math_quest/render3d/island_shader.dart';
 import 'package:math_quest/store.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
+  setUp(() => kUseGpuIsland = false);
+  tearDown(() => kUseGpuIsland = true);
+
   testWidgets('首页与课时页能正常渲染', (tester) async {
     SharedPreferences.setMockInitialValues({});
     final store = ProgressStore();
