@@ -5,7 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 
 /// 是否使用 GPU（SDF 光线步进）渲染。测试环境没有 GPU，测试里会关掉。
-bool kUseGpuIsland = true;
+bool kUseGpuIsland = false;
 
 /// 着色器里的岛 = 这份 Dart 布局，两边必须一致，
 /// 这样 2D 的数字牌才能正好贴在 3D 平台上。
@@ -143,9 +143,27 @@ class IslandShaderView extends StatefulWidget {
 
 class _IslandShaderViewState extends State<IslandShaderView>
     with SingleTickerProviderStateMixin {
+  ui.FragmentProgram? _program;
   ui.FragmentShader? _shader;
+  ui.Image? _frame;
   Ticker? _ticker;
-  final ValueNotifier<double> _time = ValueNotifier(0);
+
+  Size _want = Size.zero;
+  double _time = 0;
+  bool _rendering = false;
+  bool _dead = false;
+  int _slowFrames = 0;
+  double _lastRenderAt = -1;
+
+  /// 离屏渲染宽度（再放大到全屏）。手机上这是性能的关键：
+  /// 300 宽 ≈ 195k 像素，足够黏土风的柔和画面。
+  static const double _offscreenWidth = 300;
+
+  /// 水波刷新间隔（秒）：不需要 60fps
+  static const double _refreshEvery = 0.09;
+
+  /// 一帧超过这个毫秒数就认为这块 GPU 扛不住
+  static const int _slowFrameMs = 150;
 
   static const Vector3 _sun = Vector3(-0.45, 0.80, -0.40);
 
@@ -158,103 +176,171 @@ class _IslandShaderViewState extends State<IslandShaderView>
   Future<void> _load() async {
     try {
       final program = await ui.FragmentProgram.fromAsset('shaders/island.frag');
-      if (!mounted) return;
-      final shader = program.fragmentShader();
-      setState(() => _shader = shader);
-      _startTicker();
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _program = program;
+        _shader = program.fragmentShader();
+      });
+      _ticker = createTicker((_) {
+        _time += 1.0 / 60.0;
+        _schedule();
+      })..start();
     } catch (e) {
-      if (!mounted) return;
-      widget.onFailed?.call(e);
-      setState(() {});
+      _fail(e);
     }
   }
 
-  void _startTicker() {
-    final start = DateTime.now();
-    _ticker = createTicker((_) {
-      _time.value = DateTime.now().difference(start).inMilliseconds / 1000.0;
-    })
-      ..start();
+  void _fail(Object e) {
+    if (_dead) return;
+    _dead = true;
+    _ticker?.dispose();
+    _ticker = null;
+    widget.onFailed?.call(e);
+  }
+
+  @override
+  void didUpdateWidget(IslandShaderView old) {
+    super.didUpdateWidget(old);
+    if (old.camera != widget.camera || old.levels != widget.levels) {
+      // 相机变了立刻重画
+      _lastRenderAt = -1;
+      _schedule();
+    }
   }
 
   @override
   void dispose() {
     _ticker?.dispose();
-    _time.dispose();
+    _frame?.dispose();
+    _shader?.dispose();
     super.dispose();
   }
 
-  void _setUniforms(ui.FragmentShader s, Size size) {
+  void _schedule() {
+    if (_dead || _rendering || _program == null) return;
+    if (_want.isEmpty) return;
+    if (_lastRenderAt > 0 && _time - _lastRenderAt < _refreshEvery) return;
+    _render();
+  }
+
+  void _setUniforms(ui.FragmentShader s, double w, double h) {
     final cam = widget.camera;
     final eye = cam.position;
-    var i = 0;
-    s.setFloat(i++, size.width);
-    s.setFloat(i++, size.height);
-    s.setFloat(i++, eye.x);
-    s.setFloat(i++, eye.y);
-    s.setFloat(i++, eye.z);
-    s.setFloat(i++, cam.target.x);
-    s.setFloat(i++, cam.target.y);
-    s.setFloat(i++, cam.target.z);
-    s.setFloat(i++, cam.fovTan);
-    s.setFloat(i++, _time.value);
-    s.setFloat(i++, 0.0); // uFocus
-    s.setFloat(i++, widget.levels.toDouble());
-    s.setFloat(i++, _sun.x);
-    s.setFloat(i++, _sun.y);
-    s.setFloat(i++, _sun.z);
-    s.setFloat(i++, 1.0); // 太阳强度
+    final t = cam.target;
+    // uA = (w, h, time, fovTan)
+    s.setFloat(0, w);
+    s.setFloat(1, h);
+    s.setFloat(2, _time);
+    s.setFloat(3, cam.fovTan);
+    // uB = (cam.xyz, levels)
+    s.setFloat(4, eye.x);
+    s.setFloat(5, eye.y);
+    s.setFloat(6, eye.z);
+    s.setFloat(7, widget.levels.toDouble());
+    // uC = (target.xyz, unused)
+    s.setFloat(8, t.x);
+    s.setFloat(9, t.y);
+    s.setFloat(10, t.z);
+    s.setFloat(11, 0.0);
+    // uD = (sun.xyz, power)
+    s.setFloat(12, _sun.x);
+    s.setFloat(13, _sun.y);
+    s.setFloat(14, _sun.z);
+    s.setFloat(15, 1.0);
+  }
+
+  Future<void> _render() async {
+    final shader = _shader;
+    if (shader == null || _want.isEmpty) return;
+    _rendering = true;
+    _lastRenderAt = _time;
+
+    final w = _offscreenWidth.round();
+    final h = (w * _want.height / _want.width).round().clamp(96, 1200);
+
+    final sw = Stopwatch()..start();
+    ui.Image? img;
+    ui.Picture? pic;
+    try {
+      final rec = ui.PictureRecorder();
+      final canvas = Canvas(rec, Offset.zero & Size(w * 1.0, h * 1.0));
+      _setUniforms(shader, w * 1.0, h * 1.0);
+      canvas.drawRect(
+        Rect.fromLTWH(0, 0, w * 1.0, h * 1.0),
+        Paint()..shader = shader,
+      );
+      pic = rec.endRecording();
+      img = await pic.toImage(w, h);
+      sw.stop();
+      if (!mounted) {
+        img.dispose();
+        return;
+      }
+      // 太慢就自动认输，退回 CPU 版本，绝不把 App 拖死
+      if (sw.elapsedMilliseconds > _slowFrameMs) {
+        _slowFrames++;
+        if (_slowFrames >= 3) {
+          img.dispose();
+          _fail('着色器一帧 ${sw.elapsedMilliseconds}ms，太慢');
+          return;
+        }
+      } else {
+        _slowFrames = 0;
+      }
+      final old = _frame;
+      setState(() => _frame = img);
+      old?.dispose();
+    } catch (e) {
+      _fail(e);
+    } finally {
+      pic?.dispose();
+      _rendering = false;
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     return LayoutBuilder(builder: (context, c) {
-      final size = Size(c.maxWidth, c.maxHeight);
-      if (_shader == null) {
-        return const SizedBox.expand();
-      }
-      return ValueListenableBuilder<double>(
-        valueListenable: _time,
-        builder: (context, t, _) => CustomPaint(
-          size: size,
-          painter: _ShaderPainter(
-            shader: _shader!,
-            camera: widget.camera,
-            levels: widget.levels,
-            time: t,
-            setUniforms: _setUniforms,
+      _want = Size(c.maxWidth, c.maxHeight);
+      if (_frame == null) {
+        // 还没画出来：给一片天空色，不要闪白
+        return const DecoratedBox(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [Color(0xFF6BC0EC), Color(0xFFDDEEF7)],
+            ),
           ),
-        ),
+          child: SizedBox.expand(),
+        );
+      }
+      return CustomPaint(
+        size: _want,
+        painter: _FramePainter(_frame!),
+        isComplex: true,
       );
     });
   }
 }
 
-class _ShaderPainter extends CustomPainter {
-  final ui.FragmentShader shader;
-  final IslandCamera camera;
-  final int levels;
-  final double time;
-  final void Function(ui.FragmentShader, Size) setUniforms;
-
-  _ShaderPainter({
-    required this.shader,
-    required this.camera,
-    required this.levels,
-    required this.time,
-    required this.setUniforms,
-  });
+/// 把离屏渲染的图放大铺满
+class _FramePainter extends CustomPainter {
+  final ui.Image image;
+  const _FramePainter(this.image);
 
   @override
   void paint(Canvas canvas, Size size) {
-    setUniforms(shader, size);
-    canvas.drawRect(Offset.zero & size, Paint()..shader = shader);
+    canvas.drawImageRect(
+      image,
+      Rect.fromLTWH(0, 0, image.width.toDouble(), image.height.toDouble()),
+      Offset.zero & size,
+      Paint()..filterQuality = FilterQuality.medium,
+    );
   }
 
   @override
-  bool shouldRepaint(_ShaderPainter old) =>
-      old.time != time ||
-      old.camera.yaw != camera.yaw ||
-      old.camera.pitch != camera.pitch ||
-      old.levels != levels;
+  bool shouldRepaint(_FramePainter old) => !identical(old.image, image);
 }
