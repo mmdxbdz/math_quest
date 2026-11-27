@@ -5,7 +5,6 @@ import 'package:flutter/material.dart';
 import '../content/curriculum.dart';
 import '../models.dart';
 import '../pets.dart';
-import '../render3d/island_shader.dart';
 import '../render3d/render3d.dart' as r3;
 import '../store.dart';
 import 'island_scene.dart';
@@ -287,161 +286,10 @@ class _IslandMapState extends State<IslandMap>
     }
   }
 
-  bool _gpuOk = true;
-  IslandCamera _cam3 = const IslandCamera();
 
   @override
   Widget build(BuildContext context) {
-    if (kUseGpuIsland && _gpuOk) return _buildGpu(context);
     return _buildCpu(context);
-  }
-
-  // ═══════════ GPU 路径：SDF 光线步进着色器 ═══════════
-
-  /// 所有关卡按顺序（和 island_scene 一致）
-  List<MapLevel> _orderedLevels() {
-    final out = <MapLevel>[];
-    var idx = 0;
-    int? curIdx;
-    for (final u in units) {
-      for (final l in u.lessons) {
-        for (var st = 1; st <= 3; st++) {
-          final stars = widget.store.stageStars(l.id, st);
-          final unlocked = widget.store.levelUnlocked(orderedLevelKeys, idx);
-          if (curIdx == null && unlocked && stars == 0) curIdx = idx;
-          out.add(MapLevel(
-            lesson: l,
-            stage: st,
-            key: l.id + ':s' + st.toString(),
-            index: idx,
-            stars: stars,
-            unlocked: unlocked,
-            current: false,
-          ));
-          idx++;
-        }
-      }
-    }
-    if (curIdx != null) out[curIdx] = out[curIdx].asCurrent();
-    return out;
-  }
-
-  Widget _buildGpu(BuildContext context) {
-    return LayoutBuilder(builder: (context, constraints) {
-      final size = Size(constraints.maxWidth, constraints.maxHeight);
-      final all = _orderedLevels();
-      final count = all.length;
-      final window = count < 8 ? count : 8;
-      var curIdx = all.indexWhere((l) => l.current);
-      if (curIdx < 0) curIdx = 0;
-      final start = (curIdx - 2).clamp(0, count - window);
-      final shown = all.sublist(start, start + window);
-
-      final badges = <_Badge>[];
-      for (var i = 0; i < shown.length; i++) {
-        final l = shown[i];
-        final p = _cam3.project(IslandLayout.platformPos(i, window), size);
-        if (p == null) continue;
-        final ppu = (size.height / (2 * p.depth * _cam3.fovTan)) * 1.6;
-        badges.add(_Badge(l.index, p.at, ppu, l.stars, !l.unlocked, l.current,
-            l.stars > 0));
-      }
-      badges.sort((a, b) => a.at.dy.compareTo(b.at.dy));
-
-      return Stack(
-        clipBehavior: Clip.hardEdge,
-        children: [
-          Positioned.fill(
-            child: RepaintBoundary(
-              child: IslandShaderView(
-                camera: _cam3,
-                levels: window,
-                onFailed: (e) {
-                  if (mounted) setState(() => _gpuOk = false);
-                },
-              ),
-            ),
-          ),
-          Positioned.fill(
-            child: CustomPaint(painter: _BadgePainter(badges)),
-          ),
-          for (final b in badges)
-            Positioned(
-              key: ValueKey('lvl-' + b.index.toString()),
-              left: b.at.dx - 26,
-              top: b.at.dy - 26,
-              width: 52,
-              height: 52,
-              child: const IgnorePointer(child: SizedBox.expand()),
-            ),
-          Positioned.fill(
-            child: GestureDetector(
-              behavior: HitTestBehavior.translucent,
-              onTapUp: (d) {
-                _Badge? best;
-                var bestD = 46.0;
-                for (final b in badges) {
-                  final dd = (b.at - d.localPosition).distance;
-                  if (dd < bestD) {
-                    bestD = dd;
-                    best = b;
-                  }
-                }
-                if (best == null) return;
-                final l = all.firstWhere((x) => x.index == best!.index);
-                widget.onStartLevel(MapLevel(
-                  lesson: l.lesson,
-                  stage: l.stage,
-                  key: l.key,
-                  index: l.index,
-                  stars: l.stars,
-                  unlocked: l.unlocked,
-                  current: l.current,
-                  x: best.at.dx,
-                  y: best.at.dy,
-                  px: best.ppu,
-                ));
-              },
-              onPanUpdate: (d) {
-                setState(() {
-                  _cam3 = _cam3.copyWith(
-                    yaw: _cam3.yaw - d.delta.dx * 0.008,
-                    pitch: _cam3.pitch + d.delta.dy * 0.005,
-                  );
-                });
-              },
-              onDoubleTap: () =>
-                  setState(() => _cam3 = const IslandCamera()),
-            ),
-          ),
-          Positioned(
-            right: 14,
-            bottom: widget.bottomInset,
-            child: GestureDetector(
-              onTap: () => setState(() => _cam3 = const IslandCamera()),
-              child: Container(
-                width: 46,
-                height: 46,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: Colors.white.withValues(alpha: 0.92),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.18),
-                      blurRadius: 10,
-                      offset: const Offset(0, 4),
-                    ),
-                  ],
-                ),
-                child: const Center(
-                  child: Text('🎯', style: TextStyle(fontSize: 20)),
-                ),
-              ),
-            ),
-          ),
-        ],
-      );
-    });
   }
 
   // ═══════════ CPU 路径：软件光栅器（着色器不可用时的降级） ═══════════

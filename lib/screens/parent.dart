@@ -2,7 +2,6 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../app_info.dart';
-import '../render3d/island_shader.dart';
 import 'demo3d.dart';
 import '../models.dart';
 import '../store.dart';
@@ -437,16 +436,7 @@ class _ParentScreenState extends State<ParentScreen> {
           icon: const Icon(Icons.view_in_ar_outlined),
           label: const Text('3D 渲染验证场景'),
         ),
-        const SizedBox(height: 10),
-        StatefulBuilder(
-          builder: (context, setSwitch) => SwitchListTile(
-            contentPadding: EdgeInsets.zero,
-            value: kUseGpuIsland,
-            title: const Text('首页用黏土风格着色器（GPU）'),
-            subtitle: const Text('关掉就退回软件光栅器版本，方便对比'),
-            onChanged: (v) => setSwitch(() => kUseGpuIsland = v),
-          ),
-        ),
+
         const SizedBox(height: 30),
       ],
     );

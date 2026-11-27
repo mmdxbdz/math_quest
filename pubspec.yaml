@@ -1,7 +1,7 @@
 name: math_quest
 description: 数学闯关岛 — 二年级数学闯关练习（纯离线，原创题库）
 publish_to: 'none'
-version: 1.0.0+11
+version: 1.0.0+12
 
 environment:
   sdk: '>=3.4.0 <4.0.0'
